@@ -1,0 +1,19 @@
+# Keep dev-only files out of the tarball the app store downloads onto badges.
+# export-ignore only applies to `git archive`, which is how GitHub builds the
+# release tarball -- which is exactly what the store fetches.
+#
+# Never add `boards/` or `LICENSE` here: the first is shipped code, the second
+# has to travel with it.
+tests/ export-ignore
+tools/ export-ignore
+docs/ export-ignore
+adapters/ export-ignore
+Makefile export-ignore
+metadata.json export-ignore
+.gitignore export-ignore
+.gitattributes export-ignore
+README.md export-ignore
+controls.md export-ignore
+CONTRIBUTING.md export-ignore
+SECURITY.md export-ignore
+EDGEWISE_SPEC.md export-ignore

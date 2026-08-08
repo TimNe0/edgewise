@@ -1,0 +1,14 @@
+[app]
+name = "Edgewise"
+category = "Apps"
+wifi_preference = true
+
+[entry]
+class = "EdgewiseApp"
+
+[metadata]
+author = "TimNe0"
+license = "MIT"
+url = "https://github.com/TimNe0/edgewise"
+description = "Desk status board: each edge is one job. One MQTT line from anything lights the edge that needs you."
+version = "0.1.0"

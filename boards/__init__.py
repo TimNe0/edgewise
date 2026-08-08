@@ -129,7 +129,17 @@ class Profile:
         return tuple(i + self.led_offset for i in self.edge_leds[edge])
 
     def ring(self):
+        """Hardware indices of the whole ring."""
         return tuple(i + self.led_offset for i in range(self.led_count))
+
+    def ring_positions(self):
+        """Ring-relative positions, which is what the LED buffer is indexed by.
+
+        Kept distinct from `ring()` on purpose: mixing the two is how a frame
+        ends up offset by one, or reaching past the ring into the hexpansion
+        LEDs that share the same string.
+        """
+        return tuple(range(self.led_count))
 
     def edge_of_led(self, index):
         for edge, group in enumerate(self.edge_leds):

@@ -33,5 +33,10 @@ Copy-Item (Join-Path $app 'tildagon.toml') $dest -Force
 # own line or the app starts with no LED map at all.
 Copy-Item (Join-Path $app 'boards') $dest -Recurse -Force
 
+# The simulator ships no umqtt at all, so without this shim the whole MQTT path
+# -- connect, retained rebuild, availability, the ack round trip -- can only be
+# tested on hardware. Dev-only; a badge uses the real frozen umqtt.simple.
+Copy-Item (Join-Path $PSScriptRoot 'simshim\umqtt') (Join-Path $sim 'fakes') -Recurse -Force
+
 Push-Location $sim
 try { python run.py edgewise.EdgewiseApp } finally { Pop-Location }

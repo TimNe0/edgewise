@@ -20,7 +20,7 @@ from system.eventbus import eventbus
 from system.patterndisplay.events import PatternDisable, PatternEnable
 
 from . import boards, clock, conf as C, demo as demo_mod, layout as layout_mod, ledfx
-from . import model, views
+from . import model, mqtt_link, security, views
 from .render_ctx import CtxRenderer
 
 VERSION = "0.1.0"
@@ -64,10 +64,21 @@ class EdgewiseApp(app.App):
         self.detail = views.DetailView()
         self.calibrator = views.CalibrateView()
         self.picker = views.PickerView()
+        self.messages = views.MessageView()
         self.demo = demo_mod.Demo(self.board)
 
         self.notification = None
+        self.link = None
         self.link_state = "offline"
+        # Policy, not frame protection: the drain cap is what protects the
+        # render loop. This is what stops a publisher filling the board faster
+        # than anyone could read it.
+        self.limiter = security.RateLimiter()
+        self._seen_epoch = 0
+        self._rebuilding = False
+        self._flood_notice_ms = 0
+        self.message = None
+        self.message_until_ms = 0
 
         self.screen = SCREEN_DASH
         self.selected_edge = None
@@ -84,6 +95,7 @@ class EdgewiseApp(app.App):
 
         self._held = set()
         self._press_ms = {}
+        self._denied = False
         self._uptime_ms = 0
         self._last_tick_ms = time.ticks_ms()
         self._led_timer = 0
@@ -101,6 +113,116 @@ class EdgewiseApp(app.App):
             self.screen = SCREEN_PICKER
         elif not self.cfg["seen_demo"]:
             self._start_demo()
+
+        self._open_link()
+
+    # -- MQTT ----------------------------------------------------------------
+
+    def _open_link(self):
+        """Start the link, if there is a broker to talk to.
+
+        An unconfigured badge is not an error: demo mode and the settings
+        screen both work without a broker, so first run is never a dead end.
+        """
+        if self.link is not None:
+            self.link.stop()
+            self.link = None
+        if not C.configured(self.cfg):
+            self.link_state = "no broker set"
+            return
+        self.link = mqtt_link.Link(mqtt_link.BrokerSpec(self.cfg))
+        self._seen_epoch = 0
+        self.link.start()
+
+    def _service_link(self, now):
+        link = self.link
+        if link is None:
+            return
+        # A no-op in threaded mode; the fallback path when threads are absent.
+        link.pump(now)
+
+        if link.session_epoch != self._seen_epoch:
+            # A new session: the broker is about to replay every retained slot.
+            # Open a generation window so slots that were retained-cleared while
+            # we were offline can be swept once the burst has landed.
+            self._seen_epoch = link.session_epoch
+            self.board.begin_rebuild(now)
+            self._rebuilding = True
+            self._dirty = True
+        elif self._rebuilding and not link.connected():
+            # Dropped mid-burst, so we only have part of the picture. Sweeping
+            # on that would blank slots that are still perfectly alive.
+            self.board.abandon_rebuild()
+            self._rebuilding = False
+        elif self._rebuilding and not self.board.rebuilding(now):
+            if self.board.end_rebuild(now):
+                self._dirty = True
+            self._rebuilding = False
+
+        state = link.status_line()
+        if state != self.link_state:
+            self.link_state = state
+            self._dirty = True
+
+        self._process_inbound(link, now)
+
+    def _process_inbound(self, link, now):
+        """Drain, validate, rate-limit, apply -- in that order, on this task.
+
+        The order is the point. The drain cap bounds the work per frame; the
+        parser is the only thing that ever sees untrusted bytes; the limiter is
+        policy applied to what survived; and only then does anything reach the
+        model.
+        """
+        root = link.spec.root()
+        rebuilding = self.board.rebuilding(now)
+        for topic, payload in link.drain(4):
+            kind, name = mqtt_link.route(mqtt_link.topic_suffix(topic, root))
+            if kind is None:
+                continue
+            # The retained burst after a reconnect is a legitimate dozen
+            # messages at once, and rate-limiting it would make the board
+            # reveal itself in slow motion. It is still bounded by the drain.
+            if not rebuilding and not self.limiter.allow(now):
+                self._note_flood(now)
+                continue
+            if kind == "slot":
+                self._apply_slot(name, payload, now)
+            elif kind == "led":
+                spec = security.parse_led(payload)
+                if spec:
+                    self.engine.set_raw(spec, now)
+            elif kind == "text":
+                self._show_message(security.parse_text(payload), now)
+
+    def _apply_slot(self, name, payload, now):
+        name = security.clean_text(name, 24)
+        if not name:
+            return
+        parsed = security.parse_slot(payload)
+        if parsed is None:
+            return
+        if self.board.apply(name, parsed, now) != model.CHANGE_NONE:
+            self._dirty = True
+
+    def _show_message(self, parsed, now):
+        if not parsed:
+            return
+        self.message = parsed
+        self.message_until_ms = clock.add_ms(now, parsed["duration"] * 1000)
+        self._dirty = True
+
+    def _note_flood(self, now):
+        """One notice per ten seconds.
+
+        Turning a flood of messages into a flood of notifications is the
+        obvious own-goal, and would make the screen less usable than just
+        dropping them silently.
+        """
+        if clock.elapsed_ms(self._flood_notice_ms, now) < 10000:
+            return
+        self._flood_notice_ms = now
+        self.notification = Notification("Ignoring flood")
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -150,8 +272,13 @@ class EdgewiseApp(app.App):
         now = clock.now_ms()
 
         self._handle_buttons()
+        self._service_link(now)
 
         if self.screen == SCREEN_DEMO and self.demo.tick(now):
+            self._dirty = True
+
+        if self.message is not None and clock.expired(self.message_until_ms, now):
+            self.message = None
             self._dirty = True
 
         gone = self.board.expire(now)
@@ -281,6 +408,8 @@ class EdgewiseApp(app.App):
                                 self.cfg)
             if self.screen == SCREEN_DEMO and self.demo.caption:
                 self._demo_caption(r)
+            elif self.message is not None:
+                self.messages.draw(r, self.message["msg"], self.message["level"])
 
         if self.notification is not None:
             self.notification.draw(ctx)
@@ -307,6 +436,8 @@ class EdgewiseApp(app.App):
         if not down:
             self._held.discard(name)
             self._press_ms.pop(name, None)
+            if name == "CONFIRM":
+                self._denied = False
         return False
 
     def _held_for(self, name):
@@ -351,13 +482,69 @@ class EdgewiseApp(app.App):
             self._move_selection(1)
             return
         if self._pressed("RIGHT"):
-            name = self.layout.slot_at(self.selected_edge) \
-                if self.selected_edge is not None else None
+            name = self._selected_name()
             if name:
                 self._detail_name = name
                 self.screen = SCREEN_DETAIL
                 self._dirty = True
             return
+        if self._pressed("CONFIRM"):
+            self._acknowledge()
+            return
+        # Long-press CONFIRM denies. Fired on the timer while still held rather
+        # than on release, so the ring can confirm the moment it registers --
+        # holding a button for a second with no feedback reads as broken.
+        if ("CONFIRM" in self._held and not self._denied
+                and self._held_for("CONFIRM") >= LONG_PRESS_MS):
+            self._denied = True
+            self._deny()
+
+    def _selected_name(self):
+        if self.selected_edge is None:
+            return None
+        return self.layout.slot_at(self.selected_edge)
+
+    def _acknowledge(self):
+        name = self._selected_name()
+        if name is None:
+            return
+        self._publish_event("ack", name, self.selected_edge)
+        # Locally the slot stops asking. What an ack *means* is the
+        # subscriber's decision -- the badge never treats it as "safe" -- but
+        # leaving the edge flashing after it has been acknowledged would train
+        # people to ignore the one signal that matters.
+        slot = self.board.slots.get(name)
+        if slot is not None and slot.state == model.STATE_NEEDS_YOU:
+            slot.state = model.STATE_WORKING
+            slot.changed_ms = clock.now_ms()
+        self.notification = Notification("Acknowledged")
+        self._dirty = True
+
+    def _deny(self):
+        name = self._selected_name()
+        if name is None:
+            return
+        self._publish_event("deny", name, self.selected_edge)
+        self.notification = Notification("Denied")
+        self._dirty = True
+
+    def _publish_event(self, kind, name, edge):
+        """Outbound events carry no content beyond what happened, and where.
+
+        No labels, no messages, no project names: an event topic is the one
+        thing a subscriber cannot have already seen, so it is kept boring.
+        """
+        if self.link is None:
+            return
+        payload = '{"type":"%s","slot":"%s","edge":%s,"ts":%d}' % (
+            kind, name, edge if edge is not None else "null", self._wall_clock())
+        self.link.publish_event(payload.encode())
+
+    def _wall_clock(self):
+        try:
+            return int(time.time())
+        except Exception:  # noqa: BLE001
+            return 0
 
     def _move_selection(self, direction):
         """Move the highlight, landing only on edges that have a slot."""

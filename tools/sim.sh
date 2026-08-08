@@ -18,5 +18,10 @@ fi
 grep -q "import system.scheduler  # sim-fix" "$SIM/run.py" || \
     sed -i '/^def replace_launcher/a\    import system.scheduler  # sim-fix' "$SIM/run.py"
 
+# The simulator ships no umqtt at all, so without this shim the whole MQTT path
+# -- connect, retained rebuild, availability, the ack round trip -- can only be
+# tested on hardware. Dev-only; a badge uses the real frozen umqtt.simple.
+cp -r "$APP/tools/simshim/umqtt" "$SIM/fakes/"
+
 ln -sfn "$APP" "$SIM/apps/edgewise"
 exec python3 "$SIM/run.py" edgewise.EdgewiseApp

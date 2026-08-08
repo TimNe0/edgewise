@@ -1,3 +1,14 @@
+# Line endings. Git on this machine converts LF to CRLF in the working copy,
+# which is harmless for Python but fatal for the adapter scripts: a CRLF after
+# the shebang makes Linux report "bad interpreter: no such file or directory",
+# and the user has no way to guess why. Pin the ones that must stay LF.
+*.sh text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Makefile text eol=lf
+
 # Keep dev-only files out of the tarball the app store downloads onto badges.
 # export-ignore only applies to `git archive`, which is how GitHub builds the
 # release tarball -- which is exactly what the store fetches.

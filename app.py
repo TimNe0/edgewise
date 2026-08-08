@@ -19,8 +19,9 @@ from events.input import BUTTON_TYPES, Buttons
 from system.eventbus import eventbus
 from system.patterndisplay.events import PatternDisable, PatternEnable
 
-from . import boards, clock, conf as C, demo as demo_mod, layout as layout_mod, ledfx
-from . import model, mqtt_link, security, views
+from . import boards, clock, conf as C, demo as demo_mod, gestures as gest
+from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as touch_mod
+from . import views
 from .render_ctx import CtxRenderer
 
 VERSION = "0.1.0"
@@ -45,7 +46,6 @@ IDLE_REDRAW_MS = 1000
 # The OS pattern generator has to be told repeatedly to keep off the ring.
 PATTERN_SUPPRESS_MS = 1000
 
-LONG_PRESS_MS = 600
 
 
 class EdgewiseApp(app.App):
@@ -66,6 +66,15 @@ class EdgewiseApp(app.App):
         self.picker = views.PickerView()
         self.messages = views.MessageView()
         self.demo = demo_mod.Demo(self.board)
+
+        # Two hardware sources, one recogniser: pads on a 2026 badge, the
+        # highlighted edge plus CONFIRM on a 2024 one. Both absent is fine --
+        # the ring no-ops and the buttons always work.
+        self.touch = touch_mod.TouchRing()
+        self.flip = touch_mod.FlipDetector()
+        self.gestures = gest.GestureRecogniser()
+        self.pads = gest.PadReader(self.profile)
+        self.snoozed = False
 
         self.notification = None
         self.link = None
@@ -95,7 +104,7 @@ class EdgewiseApp(app.App):
 
         self._held = set()
         self._press_ms = {}
-        self._denied = False
+        self._confirm_was_down = False
         self._uptime_ms = 0
         self._last_tick_ms = time.ticks_ms()
         self._led_timer = 0
@@ -272,6 +281,9 @@ class EdgewiseApp(app.App):
         now = clock.now_ms()
 
         self._handle_buttons()
+        self._handle_touch(now)
+        self._handle_gestures(now)
+        self._handle_flip(delta, now)
         self._service_link(now)
 
         if self.screen == SCREEN_DEMO and self.demo.tick(now):
@@ -319,7 +331,8 @@ class EdgewiseApp(app.App):
             self._calibration_frame(now)
             return
 
-        self.engine.night_level = self._night_level()
+        self.engine.night_level = (self.cfg["night"]["level"] * 255 // 100
+                                   if self.snoozed else self._night_level())
         for edge in range(layout_mod.EDGES):
             name = self.layout.slot_at(edge)
             slot = self.board.slots.get(name) if name else None
@@ -436,8 +449,6 @@ class EdgewiseApp(app.App):
         if not down:
             self._held.discard(name)
             self._press_ms.pop(name, None)
-            if name == "CONFIRM":
-                self._denied = False
         return False
 
     def _held_for(self, name):
@@ -488,16 +499,51 @@ class EdgewiseApp(app.App):
                 self.screen = SCREEN_DETAIL
                 self._dirty = True
             return
+        # CONFIRM feeds the gesture recogniser rather than acting directly, so
+        # a button press and a pad touch travel exactly the same path: tap
+        # acknowledges, hold denies, double-tap opens the detail view. One code
+        # path, one set of timings, one test suite.
         if self._pressed("CONFIRM"):
-            self._acknowledge()
+            self.gestures.press(self.selected_edge, clock.now_ms())
+        elif "CONFIRM" not in self._held and self._confirm_was_down:
+            self.gestures.release(self.selected_edge, clock.now_ms())
+        self._confirm_was_down = "CONFIRM" in self._held
+
+    # -- touch, gestures, flip ------------------------------------------------
+
+    def _handle_touch(self, now):
+        """Feed the pads into the same recogniser the buttons use."""
+        if not self.touch.available or self.screen not in (SCREEN_DASH, SCREEN_DETAIL):
             return
-        # Long-press CONFIRM denies. Fired on the timer while still held rather
-        # than on release, so the ring can confirm the moment it registers --
-        # holding a button for a second with no feedback reads as broken.
-        if ("CONFIRM" in self._held and not self._denied
-                and self._held_for("CONFIRM") >= LONG_PRESS_MS):
-            self._denied = True
-            self._deny()
+        edge = self.pads.poll(self.touch.read(), self.gestures, now)
+        if edge is not None and edge != self.selected_edge:
+            # Touching an edge selects it, so the detail view and the button
+            # path agree about what "the current slot" means.
+            self.selected_edge = edge
+            self._dirty = True
+
+    def _handle_gestures(self, now):
+        for edge, kind in self.gestures.tick(now):
+            name = self.layout.slot_at(edge)
+            if name is None:
+                continue
+            self.selected_edge = edge
+            if kind == gest.TAP:
+                self._acknowledge()
+            elif kind == gest.LONG:
+                self._deny()
+            elif kind == gest.DOUBLE:
+                self._detail_name = name
+                self.screen = SCREEN_DETAIL
+                self._dirty = True
+
+    def _handle_flip(self, delta, now):
+        """Face-down snoozes the whole board until it is picked up again."""
+        if not self.flip.update(delta, now):
+            return
+        self.snoozed = self.flip.flipped
+        self._publish_event("snooze" if self.snoozed else "wake", "", None)
+        self._dirty = True
 
     def _selected_name(self):
         if self.selected_edge is None:
@@ -536,8 +582,14 @@ class EdgewiseApp(app.App):
         """
         if self.link is None:
             return
-        payload = '{"type":"%s","slot":"%s","edge":%s,"ts":%d}' % (
-            kind, name, edge if edge is not None else "null", self._wall_clock())
+        # A slot name is quoted JSON, so it has to survive being embedded. It
+        # has already been through clean_text on the way in, which leaves no
+        # quotes or backslashes, but building JSON by hand is exactly where
+        # that assumption stops being obvious -- so re-check it here.
+        name = (name or "").replace('"', "").replace("\\", "")
+        slot = '"%s"' % name if name else "null"
+        payload = '{"type":"%s","slot":%s,"edge":%s,"ts":%d}' % (
+            kind, slot, edge if edge is not None else "null", self._wall_clock())
         self.link.publish_event(payload.encode())
 
     def _wall_clock(self):

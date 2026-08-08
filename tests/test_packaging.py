@@ -89,6 +89,18 @@ class TestManifest(unittest.TestCase):
     def test_author_within_32_characters(self):
         self.assertLessEqual(len(self.manifest["metadata"]["author"]), 32)
 
+    def test_entry_class_exists_and_is_exported(self):
+        entry = self.manifest["entry"]["class"]
+        with open(os.path.join(ROOT, "app.py"), "r", encoding="utf-8") as f:
+            source = f.read()
+        self.assertIn("class %s(" % entry, source)
+        self.assertIn("__app_export__ = %s" % entry, source)
+
+    def test_version_matches_the_app(self):
+        version = self.manifest["metadata"]["version"]
+        with open(os.path.join(ROOT, "app.py"), "r", encoding="utf-8") as f:
+            self.assertIn(version, f.read())
+
     def test_store_copy_does_not_mention_ai(self):
         # Positioning, from the spec: Edgewise is a generic status semaphore.
         # The Claude Code adapter is one entry in the docs alongside CI, cron

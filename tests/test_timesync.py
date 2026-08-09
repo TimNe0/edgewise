@@ -32,6 +32,10 @@ class FakeNtp:
 
 
 class FakeTime:
+    """A CPython-like platform: time() counts from 1970."""
+
+    EPOCH_YEAR = 1970
+
     def __init__(self, year=1970, epoch=627):
         self.year = year
         self.epoch = epoch
@@ -39,8 +43,17 @@ class FakeTime:
     def localtime(self):
         return (self.year, 8, 9, 12, 0, 0, 0, 0)
 
+    def gmtime(self, when):
+        return (self.EPOCH_YEAR, 1, 1, 0, 0, 0, 0, 0)
+
     def time(self):
         return self.epoch if self.year >= 2024 else 627
+
+
+class FakeBadgeTime(FakeTime):
+    """A MicroPython badge: time() counts from 2000-01-01."""
+
+    EPOCH_YEAR = 2000
 
 
 def sync(ntp, time_mod):
@@ -176,3 +189,51 @@ class TestUtcOffsetEntry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEpoch(unittest.TestCase):
+    """MicroPython on embedded targets counts from 2000-01-01, not 1970.
+
+    Found on hardware. The first ack published after NTP synced carried
+    839580592, which reads as 1996-08-09 08:49:52 -- the right day and minute,
+    thirty years early. The clock face never showed it: the offset is exactly
+    10957 whole days, so the "% 86400" that makes HH:MM cancels it out. A wrong
+    epoch can hide behind a right-looking clock indefinitely, which is why this
+    is asserted against the real number the badge sent.
+    """
+
+    OBSERVED = 839580592          # what the badge published
+    REAL = 1786265392             # 2026-08-09 08:49:52 UTC, when it arrived
+
+    def test_the_badge_epoch_is_converted_to_unix(self):
+        badge = FakeBadgeTime(2026, self.OBSERVED)
+        self.assertEqual(clock.wall_seconds(badge), self.REAL)
+
+    def test_a_unix_platform_is_left_alone(self):
+        self.assertEqual(clock.wall_seconds(FakeTime(2026, self.REAL)), self.REAL)
+
+    def test_the_offset_is_asked_for_not_assumed(self):
+        self.assertEqual(clock.epoch_offset(FakeBadgeTime()),
+                         clock.EMBEDDED_EPOCH_OFFSET)
+        self.assertEqual(clock.epoch_offset(FakeTime()), 0)
+
+    def test_a_platform_with_no_gmtime_is_assumed_unix(self):
+        class NoGmtime:
+            def localtime(self):
+                return (2026, 8, 9, 0, 0, 0, 0, 0)
+
+            def time(self):
+                return 1786265392
+
+        self.assertEqual(clock.wall_seconds(NoGmtime()), 1786265392)
+
+    def test_an_unset_badge_clock_is_still_zero_not_the_offset(self):
+        # The guard has to come first, or a badge that has never synced would
+        # publish 946684800 -- the year 2000 -- which is worse than 1970 because
+        # it looks less obviously wrong.
+        self.assertEqual(clock.wall_seconds(FakeBadgeTime(1970, 0)), 0)
+
+    def test_the_clock_face_is_unaffected_either_way(self):
+        # The bug hid here: both epochs give the same HH:MM.
+        self.assertEqual(clock.local_hhmm(0, FakeBadgeTime(2026, self.OBSERVED)),
+                         clock.local_hhmm(0, FakeTime(2026, self.REAL)))

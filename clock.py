@@ -87,6 +87,29 @@ def expired(deadline, now):
 # message it signs rejected forever, for a reason nobody would find quickly.
 CLOCK_SET_YEAR = 2024
 
+# MicroPython on embedded targets counts seconds from 2000-01-01, not 1970. This
+# is the difference, and it is exactly 10957 days.
+#
+# Found on hardware: the first ack published after NTP synced carried
+# 839580592, which a subscriber read as 1996-08-09 -- the right day and minute,
+# thirty years early. The clock face never showed it, because the offset is a
+# whole number of days and the "% 86400" that turns seconds into HH:MM cancels
+# it exactly. A wrong epoch can hide behind a right-looking clock forever.
+EMBEDDED_EPOCH_OFFSET = 946684800
+
+
+def epoch_offset(time_mod):
+    """Seconds to add to this platform's time() to get Unix time.
+
+    Asked rather than assumed: `gmtime(0)` names the platform's own epoch, so
+    this works on a badge, in CPython and on any future firmware without a
+    version check to keep up to date.
+    """
+    try:
+        return EMBEDDED_EPOCH_OFFSET if time_mod.gmtime(0)[0] == 2000 else 0
+    except Exception:  # noqa: BLE001 - no gmtime at all
+        return 0
+
 
 def wall_seconds(time_mod=None):
     """Unix seconds, or 0 when the badge does not know the date."""
@@ -98,7 +121,7 @@ def wall_seconds(time_mod=None):
     try:
         if time_mod.localtime()[0] < CLOCK_SET_YEAR:
             return 0
-        return int(time_mod.time())
+        return int(time_mod.time()) + epoch_offset(time_mod)
     except Exception:  # noqa: BLE001 - no RTC at all
         return 0
 

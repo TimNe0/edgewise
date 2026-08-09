@@ -44,10 +44,30 @@ decision and want the badge to say so, publish it yourself:
 adapters/shell/edgewise-pub.sh "$(basename "$PWD")" needs_you "waiting on a decision"
 ```
 
+**On Windows the hook command must name an interpreter** — the editor runs hooks
+through `cmd`, which exits 0 on a `.sh` and does nothing, so the hook looks
+installed and fires into a void. `install-hooks.sh` handles this; if you write
+anything similar, test it by running the command exactly as `settings.json`
+spells it from a shell the editor would use, never from Git Bash.
+
+## Poking the badge from anything else
+
+`adapters/http/` is a small HTTP bridge for things that cannot speak MQTT.
+Useful from a script that has `curl` and nothing else:
+
+```sh
+adapters/http/edgewise-http.py --token "$EDGEWISE_HTTP_TOKEN"
+curl -H "X-Edgewise-Token: $EDGEWISE_HTTP_TOKEN"      "http://127.0.0.1:8420/slot/build?state=done"
+```
+
+`GET /wait/<slot>` blocks until that slot is acknowledged or denied on the
+badge, so a tap becomes an exit code. Read `docs/security.md` before treating
+that as an authorisation — the badge does not know who pressed it.
+
 ## Running it
 
 ```sh
-python -m unittest discover -t . -s tests      # 311 tests, no dependencies
+python -m unittest discover -t . -s tests      # no dependencies
 ```
 
 Everything except the LED hardware and the touch ring runs under CPython, and

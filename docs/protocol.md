@@ -278,7 +278,13 @@ mosquitto_sub -h $BROKER -t "edgewise/$ID/event" -v
 mosquitto_pub -h $BROKER -t "edgewise/$ID/slot/kiln" -r -n
 ```
 
+If whatever you are wiring up cannot speak MQTT at all — a webhook, a phone
+shortcut, a browser bookmark — [the HTTP bridge](../adapters/http/README.md)
+speaks this protocol on its behalf, and can also hold a request open until you
+tap the badge.
+
 Adapters that wrap this up: [Claude Code](../adapters/claude-code/README.md),
 [Home Assistant](../adapters/home-assistant/README.md),
 [CI](../adapters/ci/README.md), [shell and cron](../adapters/shell/README.md),
+[HTTP](../adapters/http/README.md),
 [OctoPrint](../adapters/octoprint/README.md).

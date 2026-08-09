@@ -81,6 +81,12 @@ Publish through `shell/edgewise-pub.sh` rather than building topics yourself,
 exit 0 when the broker is unreachable, bound every wait, and honour
 `EDGEWISE_LABELS=hash`.
 
+`http/` is the one adapter that does not go through `edgewise-pub.sh`, and the
+reason is worth knowing before you copy it: `/wait` needs a *subscription* held
+open across requests, which a fire-and-forget publisher cannot provide. It talks
+to paho directly for that. If your adapter only publishes, use the shell one —
+there is then a single place where a topic is built and JSON is escaped.
+
 End the adapter's README with a copy-paste block you have actually run.
 
 ## Pull requests

@@ -41,6 +41,7 @@ model below.
 | Flooding | Board becomes unreadable, heap pressure | Token bucket at ~5 msg/s, burst 10; bounded inbox that drops the newest; a drain cap so a burst cannot miss frames |
 | Replay of a captured `ack` | Real, and the reason signed mode exists | Events are never retained. Signed mode (M6) adds HMAC + a 60 s freshness window |
 | Malicious installer script | The usual supply-chain worry | Every installer is short, reviewable, idempotent, needs no sudo, and never pipes from the network |
+| Someone on your LAN reaching the HTTP bridge | Real, and the only listener in the project | A token is required to start; it is sent in the clear, so it guards against accidents rather than attackers. Bind to 127.0.0.1 if only local scripts need it |
 
 ## What the badge does to inbound messages
 
@@ -137,6 +138,42 @@ see the requested command in the `msg` field, and on an unauthenticated broker
 they can publish a fake `ack` on your event topic that your hook will believe.
 That is the whole reason for the refusal. Signed mode (M6) closes it; until
 then, private broker or nothing.
+
+## The HTTP bridge
+
+`adapters/http/` is a listener on your network, which is a genuinely new thing
+in this threat model: everything else here only ever *connects out* to a broker.
+It exists because webhooks, phone shortcuts and `curl` cannot speak MQTT.
+
+| | |
+|---|---|
+| **What it adds** | one TCP port on a machine you own, holding your broker credentials and a token |
+| **What it does not add** | anything on the badge. The badge has no HTTP client and never will; see the non-goals in the spec |
+
+**The token is protection against accidents, not against attackers.** It is sent
+in the clear over plain HTTP, so anyone who can watch your LAN can read it and
+then light your badge. That is the same conclusion as everywhere else in this
+document: on a network you do not control, the badge is a lamp and should be
+treated as one. The bridge refuses to start without a token because "it is only
+my LAN" is how something ends up reachable from a guest network — not because
+the token makes it safe to expose.
+
+Bind it to `127.0.0.1` if only local scripts need it. Do not put it on the
+internet; there is no rate limiting, no TLS and no account model, and there was
+never meant to be.
+
+**`/wait/<slot>` is the part to think hardest about.** It holds a request open
+until you acknowledge or deny a slot, so a tap on the badge becomes an exit
+code — and a script that deploys on exit 0 has turned a tap into an
+authorisation. Everything in "What the badge sends" above still applies: the
+badge reports that *someone* pressed something, it does not know who, and on an
+unauthenticated broker anyone who knows your device ID can publish a fake `ack`
+that the bridge will believe and hand to your script.
+
+If a tap can spend money or move a robot, the broker needs authentication, and
+you should be reading the approve-from-badge section rather than this one. A
+timeout returns 408 rather than a 200 with nothing in it, precisely so a caller
+cannot read "no answer" as approval.
 
 ## Recommended setups, best first
 

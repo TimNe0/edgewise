@@ -65,5 +65,86 @@ class TestEdgeGeometry(unittest.TestCase):
         self.assertNotEqual(views.EDGE_CENTRE_OFFSET_DEG % 60.0, 0.0)
 
 
+
+class FakeRenderer:
+    """Records what was drawn, so a test can ask whether anything marked the
+    selected edge at all -- which is exactly what nothing did."""
+
+    def __init__(self):
+        self.arcs = []
+        self.texts = []
+
+    def clear(self, rgb):
+        pass
+
+    def arc(self, x, y, r, start, end, rgb, w=8):
+        self.arcs.append((r, start, end, rgb, w))
+
+    def text(self, s, x, y, rgb, size=12, align="left"):
+        self.texts.append((s, rgb))
+
+    def text_width(self, s, size=12):
+        return len(s) * size * 0.6
+
+    def circle(self, *a, **k):
+        pass
+
+    def line(self, *a, **k):
+        pass
+
+    def poly(self, *a, **k):
+        pass
+
+
+class FakeEngine:
+    def edge_colour(self, edge):
+        return (0, 0, 0)
+
+
+class FakeLayout:
+    def slot_at(self, edge):
+        return None
+
+
+class FakeBoard:
+    slots = {}
+
+    def counts(self):
+        return (0, 0)
+
+
+class TestSelectionIsVisible(unittest.TestCase):
+    """Found on hardware: UP/DOWN moved the selection and nothing on screen
+    changed, so the only way to discover an edge was selected was to press
+    CONFIRM and watch an ack fire. `selected_edge` was in the redraw trigger --
+    so the screen faithfully repainted, identically."""
+
+    def render(self, selected):
+        r = FakeRenderer()
+        views.Dashboard().draw(r, FakeBoard(), FakeLayout(), FakeEngine(), 0,
+                               selected=selected)
+        return r
+
+    def test_nothing_is_marked_when_nothing_is_selected(self):
+        self.assertEqual(len(self.render(None).arcs), views.EDGES)
+
+    def test_a_selected_edge_gets_its_own_mark(self):
+        drawn = self.render(2)
+        self.assertEqual(len(drawn.arcs), views.EDGES + 1)
+
+    def test_the_mark_sits_inside_the_state_arc(self):
+        # Not a brighter version of the arc: the arc's colour is the slot's
+        # state and has to keep meaning that.
+        extra = [a for a in self.render(2).arcs if a[0] != views.ARC_RADIUS]
+        self.assertEqual(len(extra), 1)
+        self.assertLess(extra[0][0], views.ARC_RADIUS)
+        self.assertEqual(extra[0][3], views.ACCENT)
+
+    def test_the_mark_follows_the_selection(self):
+        for edge in range(views.EDGES):
+            extra = [a for a in self.render(edge).arcs
+                     if a[0] != views.ARC_RADIUS][0]
+            self.assertEqual((extra[1], extra[2]), views.edge_arc(edge))
+
 if __name__ == "__main__":
     unittest.main()

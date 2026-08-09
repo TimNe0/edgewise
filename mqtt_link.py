@@ -202,11 +202,15 @@ class Link:
         return self.state == STATE_ONLINE
 
     def status_line(self):
+        # Polled mode is shown in *every* state, not just when online. A badge
+        # that fell back to polling does its blocking connect on the render
+        # loop, so its buttons freeze for as long as a DNS lookup or a TCP
+        # handshake takes -- and while it is stuck retrying, the one state where
+        # that is most obvious to the user was the one state that never said so.
+        suffix = "" if self._threaded else " (polled)"
         if self.state == STATE_ERROR and self.state_msg:
-            return self.state_msg[:24]
-        if self.state == STATE_ONLINE and self._threaded is False:
-            return "online (polled)"
-        return self.state
+            return (self.state_msg + suffix)[:24]
+        return (self.state + suffix)[:24]
 
     # -- worker side ---------------------------------------------------------
 
@@ -356,11 +360,23 @@ def route(suffix):
     return (None, None)
 
 
+# Enough for a handshake on a slow link, short enough that a polled-mode badge
+# is not frozen for a minute at a time. Only used where the client supports it.
+SOCKET_TIMEOUT_S = 8
+
+
 def _default_client(spec):  # pragma: no cover - needs firmware
     from umqtt.simple import MQTTClient
 
-    return MQTTClient(
-        spec.client_id, spec.host, port=spec.port,
-        user=spec.user, password=spec.password,
-        keepalive=KEEPALIVE_S, ssl=spec.tls,
-    )
+    kwargs = dict(port=spec.port, user=spec.user, password=spec.password,
+                  keepalive=KEEPALIVE_S, ssl=spec.tls)
+    try:
+        # Newer micropython-lib takes this; older frozen copies do not, and the
+        # difference is a TypeError rather than anything discoverable. Without
+        # it a dead broker that still completes a TCP connect blocks the caller
+        # indefinitely -- forever on the worker thread, and on the render loop
+        # itself if threads were unavailable.
+        return MQTTClient(spec.client_id, spec.host,
+                          socket_timeout=SOCKET_TIMEOUT_S, **kwargs)
+    except TypeError:
+        return MQTTClient(spec.client_id, spec.host, **kwargs)

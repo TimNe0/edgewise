@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -522,7 +522,8 @@ class EdgewiseApp(app.App):
         else:
             self.dashboard.draw(r, self.board, self.layout, self.engine, now,
                                 views.link_summary(self.link_state, self.cfg),
-                                self.cfg, self._hhmm(), self.weather)
+                                self.cfg, self._hhmm(), self.weather,
+                                self.selected_edge)
             if self.screen == SCREEN_DEMO and self.demo.caption:
                 self._demo_caption(r)
             elif self.message is not None:

@@ -77,14 +77,14 @@ class Dashboard:
     """The default screen: six arcs, labels, and a count in the middle."""
 
     def draw(self, r, board, layout, engine, now_ms, link_state="", cfg=None,
-             hhmm=None, weather=None):
+             hhmm=None, weather=None, selected=None):
         r.clear(BG)
-        self._arcs(r, layout, engine, now_ms)
-        self._labels(r, board, layout, now_ms)
+        self._arcs(r, layout, engine, now_ms, selected)
+        self._labels(r, board, layout, now_ms, selected)
         self._centre(r, board, now_ms, hhmm, weather)
         self._footer(r, link_state, cfg)
 
-    def _arcs(self, r, layout, engine, now_ms):
+    def _arcs(self, r, layout, engine, now_ms, selected=None):
         for edge in range(EDGES):
             start, end = edge_arc(edge)
             colour = engine.edge_colour(edge)
@@ -94,8 +94,13 @@ class Dashboard:
                 r.arc(0, 0, ARC_RADIUS, start, end, (0.11, 0.11, 0.13), ARC_WIDTH)
             else:
                 r.arc(0, 0, ARC_RADIUS, start, end, rgb255(colour), ARC_WIDTH)
+            if edge == selected:
+                # A separate ring inside the arc rather than a brighter arc:
+                # the arc's colour is the slot's state and must keep meaning
+                # that, so the cursor has to be a mark of its own.
+                r.arc(0, 0, ARC_RADIUS - ARC_WIDTH, start, end, ACCENT, 3)
 
-    def _labels(self, r, board, layout, now_ms):
+    def _labels(self, r, board, layout, now_ms, selected=None):
         for edge in range(EDGES):
             name = layout.slot_at(edge)
             if name is None:
@@ -104,7 +109,8 @@ class Dashboard:
             if slot is None:
                 continue
             x, y = edge_anchor(edge, 74)
-            colour = DIM if slot.is_stale(now_ms) else FG
+            colour = ACCENT if edge == selected else (
+                DIM if slot.is_stale(now_ms) else FG)
             r.text(slot.label[:10], x, y - 6, colour, size=15, align="center")
             age = short_age(slot.age_ms(now_ms))
             if slot.is_stale(now_ms):

@@ -84,9 +84,30 @@ class Chaos:
         self.publish("slot/canary", fixtures.VALID_SLOT)
 
     def clear_bulk(self):
-        for i in range(200):
-            self.publish("slot/bulk%03d" % i, b"", retain=True)
-        self.publish("slot/canary", b"", retain=True)
+        """Clear what is actually retained, not what we think we published.
+
+        The first version cleared `bulk000..199` and `canary` by name. It left
+        `flood*` behind entirely, and at ~970 msg/s some of its QoS 0 clears
+        were dropped on the way out -- so a badge went on being told to light up
+        for minutes after the run ended, looking exactly like a badge the soak
+        had broken. Enumerate instead: subscribe, see what is there, clear that.
+        """
+        found = []
+
+        def collect(_c, _u, msg):
+            if msg.retain and msg.payload:
+                found.append(msg.topic)
+
+        self.client.on_message = collect
+        self.client.subscribe(self.root + "/slot/+")
+        # Retained delivery is immediate, but give the broker a moment to get
+        # through a backlog this test will have built up.
+        time.sleep(2.0)
+        for topic in sorted(set(found)):
+            self.client.publish(topic, b"", retain=True, qos=0)
+        self.client.unsubscribe(self.root + "/slot/+")
+        time.sleep(0.5)
+        return sorted(set(found))
 
 
 def main():
@@ -160,7 +181,10 @@ def main():
         print("interrupted")
 
     print("cleaning up retained test slots")
-    chaos.clear_bulk()
+    cleared = chaos.clear_bulk()
+    print("  cleared %d retained slot(s)%s" % (
+        len(cleared), (": " + ", ".join(t.rsplit("/", 1)[-1] for t in cleared))
+        if cleared else ""))
     time.sleep(1)
     client.loop_stop()
     client.disconnect()

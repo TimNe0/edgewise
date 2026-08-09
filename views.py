@@ -224,7 +224,9 @@ class DetailView:
         if slot.msg:
             self._wrapped(r, slot.msg, -22)
 
-        r.text("for " + short_age(slot.age_ms(now_ms)), 0, 44, DIM,
+        # "waiting 4m", the wording the spec uses. A bare "4m" next to a
+        # number that climbs on its own is a mystery, and it was read as one.
+        r.text("waiting " + short_age(slot.age_ms(now_ms)), 0, 44, DIM,
                size=13, align="center")
         where = "edge %d" % edge if edge is not None else "no edge"
         if pinned:
@@ -232,6 +234,7 @@ class DetailView:
         r.text(where, 0, 62, DIM, size=11, align="center")
         r.text("CONFIRM ack  ·  hold deny", 0, 88, (0.4, 0.4, 0.44),
                size=10, align="center")
+        r.text("CANCEL back", 0, 100, (0.3, 0.3, 0.34), size=9, align="center")
 
     def _wrapped(self, r, text, y):
         # The panel is round, so the usable width narrows away from the middle.

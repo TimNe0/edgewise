@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.4.3"
+VERSION = "0.5.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -595,6 +595,19 @@ class EdgewiseApp(app.App):
             if self._pressed("CANCEL") or self._pressed("LEFT"):
                 self.screen = SCREEN_DASH
                 self._dirty = True
+                return
+            # The view has always drawn "CONFIRM ack - hold deny" and this
+            # handler has always ignored both. The detail screen is where the
+            # message is legible, so it is where a decision actually gets made:
+            # promising the action and dropping it is the worst of the options.
+            #
+            # Fed through the same recogniser as the dashboard, so tap and hold
+            # keep one set of timings and one test suite.
+            if self._pressed("CONFIRM"):
+                self.gestures.press(self.selected_edge, clock.now_ms())
+            elif "CONFIRM" not in self._held and self._confirm_was_down:
+                self.gestures.release(self.selected_edge, clock.now_ms())
+            self._confirm_was_down = "CONFIRM" in self._held
             return
         if self.screen == SCREEN_SETTINGS:
             return self._settings_buttons()
@@ -730,8 +743,14 @@ class EdgewiseApp(app.App):
             self.selected_edge = edge
             if kind == gest.TAP:
                 self._acknowledge()
+                # Back to the board, so the decision is visibly done rather
+                # than leaving you on a page describing what you just cleared.
+                if self.screen == SCREEN_DETAIL:
+                    self.screen = SCREEN_DASH
             elif kind == gest.LONG:
                 self._deny()
+                if self.screen == SCREEN_DETAIL:
+                    self.screen = SCREEN_DASH
             elif kind == gest.DOUBLE:
                 self._detail_name = name
                 self.screen = SCREEN_DETAIL

@@ -60,9 +60,9 @@ def code_only(text):
 
     The scripts *talk about* the things they promise not to do -- "if this ever
     grows a curl, do not run it" is the sentence a reviewer should find in
-    there, and the HTTP bridge's docstring shows the `curl` commands a user is
-    meant to type. Scanning prose would make documenting a tool the one thing
-    that trips the test for using it.
+    there, and a docstring may well show the `curl` commands a user is meant to
+    type. Scanning prose would make documenting a tool the one thing that trips
+    the test for using it.
     """
     text = DOCSTRING.sub("", text)
     return "\n".join(line for line in text.split("\n")

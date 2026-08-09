@@ -10,11 +10,16 @@ apart.
 | [claude-code](claude-code/README.md) | One edge per checkout, driven by editor hooks. Optional approve-from-badge |
 | [home-assistant](home-assistant/README.md) | Example automations both ways; discovery notes for M5 |
 | [ci](ci/README.md) | GitHub Actions workflow, and a one-liner for everything else |
-| [http](http/README.md) | A URL for everything that cannot speak MQTT: webhooks, phone shortcuts, `curl`. Can also block until you tap the badge |
 | [octoprint](octoprint/README.md) | Bridges OctoPrint's MQTT events onto an edge |
 
 Writing your own is one `mosquitto_pub` line — see
 [docs/protocol.md](../docs/protocol.md).
+
+**Nothing here can speak MQTT?** The badge answers HTTP itself — no adapter, no
+broker, nothing in the middle. There used to be a bridge in this directory that
+turned URLs into MQTT publishes; the badge does the job directly now, so it was
+deleted rather than left to rot. See
+[the HTTP section of the protocol](../docs/protocol.md#the-other-door-http-on-the-badge-itself).
 
 ## Running several at once
 

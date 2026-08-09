@@ -29,9 +29,11 @@ In scope, and interesting:
   approval it was not.
 - A way to make an **installer script** do something a reader of its 60 lines
   would not expect.
-- A way past the **HTTP bridge's** token, or to make it publish something the
-  caller did not ask for. It is a listener on your network holding broker
-  credentials, so it gets the same scrutiny as the badge does.
+- A way past the **badge's HTTP token**, to reach an endpoint without one, or to
+  make a request do something the caller did not ask for. It is the only thing
+  on the badge that listens, so it gets the most scrutiny of anything here.
+- A way to make an HTTP request **bypass a cap that MQTT is subject to**. Both
+  doors share one validator on purpose; a difference between them is a bug.
 
 Out of scope, because they are documented properties rather than bugs — see
 [docs/security.md](docs/security.md):
@@ -42,9 +44,11 @@ Out of scope, because they are documented properties rather than bugs — see
   settings file. The badge has no keystore.
 - Traffic to a public broker is readable. Use your own broker.
 - Physical access to an unlocked badge reveals its configuration.
-- The HTTP bridge's token travels in the clear over plain HTTP. It guards
+- The badge's HTTP token travels in the clear over plain HTTP. It guards
   against accidents on a network you trust; it is not a defence against someone
-  reading your LAN, and the README says so where you set it up.
+  reading your LAN, and the settings screen says so where you turn it on.
+- Anyone on your network can reach the badge's `/health` while HTTP is enabled.
+  That is deliberate: it is how you find the badge without a secret.
 
 ## Threat model in one paragraph
 

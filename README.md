@@ -51,28 +51,32 @@ That is the whole protocol. `-r` matters: the badge keeps no state that matters
 and rebuilds the board from retained messages every time it reconnects, so a
 slot published without it disappears at the next reboot.
 
-## No MQTT client? Poke it with a URL
+## No MQTT client? Poke the badge directly
 
 Webhooks, phone shortcuts, a browser bookmark, `curl` in a Makefile — none of
-those speak MQTT. [The HTTP bridge](adapters/http/README.md) runs on any machine
-on your network and turns a URL into a badge:
+those speak MQTT. The badge answers HTTP itself, so there is nothing in the
+middle: no broker, no bridge, no second machine.
+
+Turn it on at **Settings → Device ID → HTTP access**. That screen then shows the
+address and token.
 
 ```sh
-adapters/http/edgewise-http.py --token hunter2
-
-curl -H "X-Edgewise-Token: hunter2" "http://desk:8420/slot/build?state=error"
+curl -H "X-Edgewise-Token: 7X5Y3I7A"      "http://192.168.1.238:8420/slot/build?state=error&msg=3+tests+failed"
 ```
 
 It can also wait for you:
 
 ```sh
-curl -H "X-Edgewise-Token: hunter2" --max-time 310 "http://desk:8420/wait/deploy"
-# blocks until you acknowledge or deny that edge on the badge
+curl -H "X-Edgewise-Token: 7X5Y3I7A" --max-time 130      "http://192.168.1.238:8420/wait/deploy"
+# holds the request open until you acknowledge or deny that edge
 ```
 
-which makes the badge an approval gate for anything that can call a URL. The
-badge itself has no HTTP client and never will — read
-[docs/security.md](docs/security.md) before treating a tap as an authorisation.
+which makes the badge an approval gate for anything that can call a URL.
+
+Same fields, same limits, same caps as MQTT — a request is validated by exactly
+the code an MQTT message is. It is off by default, wants a token, and
+[docs/security.md](docs/security.md) is worth reading before you treat a tap as
+an authorisation: the badge does not know who pressed it.
 
 ## Read this before you point it at a public broker
 
@@ -139,7 +143,6 @@ reasoning behind the timings, is in [controls.md](controls.md).
 | [Claude Code](adapters/claude-code/README.md) | walk away and let the badge call you back; one edge per checkout |
 | [Home Assistant](adapters/home-assistant/README.md) | washing machine, doorbell, freezer; taps back into automations |
 | [CI](adapters/ci/README.md) | GitHub Actions workflow, and a one-liner for everything else |
-| [HTTP](adapters/http/README.md) | poke it with `curl`; or block until you tap the badge |
 | [OctoPrint](adapters/octoprint/README.md) | print finished, or wants filament |
 
 Writing your own is one `mosquitto_pub` line. The complete wire protocol —

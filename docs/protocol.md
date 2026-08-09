@@ -226,6 +226,70 @@ publishes `offline` if the badge drops off the Wi-Fi without saying goodbye —
 which is the case that matters, because a badge that has quietly died looks
 exactly like a badge with nothing to report.
 
+## The other door: HTTP, on the badge itself
+
+Everything above is MQTT, and MQTT is what makes the board durable — retained
+slots rebuild it after a reboot, and the `event` topic pushes your taps to
+everyone at once. But a webhook, a phone shortcut or a browser bookmark cannot
+speak MQTT at all, and for those the badge answers HTTP directly.
+
+**Off by default.** Settings → Device ID → HTTP access. That screen then shows
+the address and the token, because the address is DHCP's to change.
+
+```sh
+curl -H "X-Edgewise-Token: 7X5Y3I7A"      "http://192.168.1.238:8420/slot/kiln?state=needs_you&msg=door+open"
+curl "http://192.168.1.238:8420/health"        # the one endpoint with no token
+```
+
+| Endpoint | Parameters |
+|---|---|
+| `/slot/<name>` | `state` `label` `msg` `ttl` `edge` |
+| `/text` | `msg` `level` `duration` |
+| `/weather` | `cond` `temp` `rain` `unit` `ttl` |
+| `/led` | `segment` `effect` `rgb` `speed` `brightness` `ttl` |
+| `/wait/<name>` | `timeout` — holds the request open until you tap |
+| `/health` | version, slot count, uptime |
+
+GET, POST and PUT all work, because half the things that will point at this can
+only do one of them. The token goes in `X-Edgewise-Token` or `?token=`.
+
+**The fields, the limits and the caps are the ones above.** A request builds the
+same payload the MQTT path parses and hands it to the same validator, so a slot
+set over HTTP and the same slot set over MQTT are indistinguishable by the time
+anything lights up. There is no second set of rules to learn or to get wrong.
+
+It is stricter in one direction only: a misspelled state gets a 400 naming the
+valid ones, where the MQTT path silently ignores it. A publisher on a radio
+cannot be told; a person at a terminal can.
+
+### What it will refuse
+
+Four connections, two callers waiting on `/wait`, a 1 KB body, a 512-byte
+request line, five seconds per connection — and requests share the same ~5/s
+rate limit as MQTT, so HTTP is not a way around the flood protection.
+
+| | |
+|---|---|
+| 400 | malformed, or a value the validator rejected |
+| 401 | missing or wrong token |
+| 404 | no such endpoint |
+| 408 | `/wait` timed out — **not** a 200, so no caller can read silence as approval |
+| 413 | body too large |
+| 429 | over the rate limit |
+| 503 | too many connections, or too many already waiting |
+
+### Waiting for a tap
+
+```sh
+curl -H "X-Edgewise-Token: $T" "http://$BADGE:8420/slot/deploy?state=needs_you&msg=ship+v2"
+curl -H "X-Edgewise-Token: $T" --max-time 130 "http://$BADGE:8420/wait/deploy"
+```
+
+Returns `{"type":"ack","slot":"deploy"}` when you press it, `deny` if you hold,
+and **408** if nobody does. That makes the badge an approval gate for anything
+that can call a URL — read [security.md](security.md) before treating it as
+one, because the badge does not know who pressed it.
+
 ## QoS, keepalive, reconnect
 
 **Everything is QoS 0.** That is not laziness. The on-badge `umqtt.simple`
@@ -278,13 +342,7 @@ mosquitto_sub -h $BROKER -t "edgewise/$ID/event" -v
 mosquitto_pub -h $BROKER -t "edgewise/$ID/slot/kiln" -r -n
 ```
 
-If whatever you are wiring up cannot speak MQTT at all — a webhook, a phone
-shortcut, a browser bookmark — [the HTTP bridge](../adapters/http/README.md)
-speaks this protocol on its behalf, and can also hold a request open until you
-tap the badge.
-
 Adapters that wrap this up: [Claude Code](../adapters/claude-code/README.md),
 [Home Assistant](../adapters/home-assistant/README.md),
 [CI](../adapters/ci/README.md), [shell and cron](../adapters/shell/README.md),
-[HTTP](../adapters/http/README.md),
 [OctoPrint](../adapters/octoprint/README.md).

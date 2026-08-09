@@ -40,9 +40,24 @@ Assistant adapters with equal billing. Nothing in the app UI or store listing me
   (v1 is a foreground app; see §15 V-6).
 - Per-slot custom palettes; audible alert via buzzer hexpansions.
 
-**Non-goals (v1):** running a broker on the badge; non-MQTT transports (HTTP listener may come
-later); full WLED API compatibility (we borrow the *style* of its effects, not the protocol);
-history/logging.
+**Non-goals (v1):** running a broker on the badge; ~~non-MQTT transports (HTTP listener may come
+later)~~ — **overridden, see below**; full WLED API compatibility (we borrow the *style* of its
+effects, not the protocol); history/logging.
+
+> **Override, v0.11.0 — the badge listens.** "HTTP listener may come later" was the escape hatch,
+> and it has been taken. A host-side bridge existed briefly and was the wrong shape: a second
+> machine that had to be running, holding the broker credentials, translating URLs into publishes.
+> If you want to poke the badge, you should be able to poke the badge.
+>
+> MQTT is **not** replaced and is not redundant. It still carries what a listener cannot: slots
+> retained so the board rebuilds itself after a reboot, the `event` stream that pushes taps to every
+> subscriber at once, and reachability for publishers that cannot route to the badge.
+>
+> The thing the original non-goal was protecting against — a badge with an attack surface — is
+> answered by construction rather than by abstention. The HTTP path builds the same payload the MQTT
+> path does and hands it to the same validator, so it inherits every cap and the entire
+> hostile-input corpus; the 3 Hz strobe limit applies without `httpd.py` mentioning it. It is off by
+> default, requires a token, and every bound is checked before any work is done.
 
 ---
 

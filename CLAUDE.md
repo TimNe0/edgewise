@@ -52,17 +52,26 @@ spells it from a shell the editor would use, never from Git Bash.
 
 ## Poking the badge from anything else
 
-`adapters/http/` is a small HTTP bridge for things that cannot speak MQTT.
-Useful from a script that has `curl` and nothing else:
+The badge answers HTTP itself (`httpd.py`), for callers that cannot speak MQTT.
+Off by default: Settings → Device ID → HTTP access, which then shows the address
+and token.
 
 ```sh
-adapters/http/edgewise-http.py --token "$EDGEWISE_HTTP_TOKEN"
-curl -H "X-Edgewise-Token: $EDGEWISE_HTTP_TOKEN"      "http://127.0.0.1:8420/slot/build?state=done"
+curl -H "X-Edgewise-Token: <token>" "http://<badge>:8420/slot/build?state=done"
+curl "http://<badge>:8420/health"          # no token
 ```
 
-`GET /wait/<slot>` blocks until that slot is acknowledged or denied on the
-badge, so a tap becomes an exit code. Read `docs/security.md` before treating
+`GET /wait/<slot>` holds the request open until that slot is acknowledged or
+denied, so a tap becomes an exit code. Read `docs/security.md` before treating
 that as an authorisation — the badge does not know who pressed it.
+
+**The rule to keep:** `httpd.route` builds a dict and hands it to
+`security.parse_*`, the same validators MQTT uses. Never add a limit, an enum or
+a cap to `httpd.py` — a second transport with its own idea of the rules is a
+second set of bugs, findable only on whichever door an attacker picks.
+
+There was an HTTP-to-MQTT bridge in `adapters/http/` until v0.11.0. The badge
+does the job directly now; it was deleted rather than left to rot.
 
 ## Running it
 

@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -47,6 +47,13 @@ SCREEN_INTERVAL_MS = 200
 IDLE_REDRAW_MS = 1000
 # The OS pattern generator has to be told repeatedly to keep off the ring.
 PATTERN_SUPPRESS_MS = 1000
+
+# How often the badge reports its own loop timing. Buttons are polled once per
+# iteration, so the loop rate *is* the input latency: at 5 Hz a press has to be
+# held a fifth of a second to be seen at all, and a short press vanishes. This
+# exists because "it takes a while to notice I pressed a button" was reported
+# from a badge and guessing at the cause from a desktop was not working.
+STATS_INTERVAL_MS = 10000
 
 
 
@@ -133,6 +140,11 @@ class EdgewiseApp(app.App):
         self._dirty = True
         self._since_draw_ms = 0
         self._last_draw_state = None
+
+        self._loops = 0
+        self._renders = 0
+        self._worst_ms = 0
+        self._stats_ms = 0
 
         # A board whose profile was guessed rather than detected, on a first
         # run, is the one case where asking is better than assuming.
@@ -358,6 +370,7 @@ class EdgewiseApp(app.App):
         self._dirty = True
 
     async def _render(self, render_update):
+        self._renders += 1
         self._dirty = False
         self._since_draw_ms = 0
         self._last_draw_state = self._draw_state()
@@ -366,6 +379,15 @@ class EdgewiseApp(app.App):
     def update(self, delta):
         self._uptime_ms += delta
         now = clock.now_ms()
+
+        # One poll of the buttons happens per iteration, so this counts input
+        # latency directly rather than by proxy.
+        self._loops += 1
+        if delta > self._worst_ms:
+            self._worst_ms = delta
+        self._stats_ms += delta
+        if self._stats_ms >= STATS_INTERVAL_MS:
+            self._publish_stats()
 
         self.timesync.pump(now)
         self._handle_buttons()
@@ -823,6 +845,35 @@ class EdgewiseApp(app.App):
         payload = '{"type":"%s","slot":%s,"edge":%s,"ts":%d}' % (
             kind, slot, edge if edge is not None else "null", self._wall_clock())
         self.link.publish_event(payload.encode())
+
+    def _publish_stats(self):
+        """Loop rate, worst iteration, renders, free heap. Not retained.
+
+        Diagnostics rather than protocol: a subscriber that has never heard of
+        this topic is unaffected, and a badge nobody is watching pays one small
+        publish every ten seconds.
+        """
+        elapsed = self._stats_ms or 1
+        loops = self._loops * 1000 // elapsed
+        renders = self._renders * 1000 // elapsed
+        self._loops = self._renders = 0
+        self._stats_ms = 0
+        worst, self._worst_ms = self._worst_ms, 0
+
+        try:
+            import gc
+
+            free = gc.mem_free()
+        except Exception:  # noqa: BLE001 - not every build has it
+            free = -1
+
+        if self.link is None:
+            return
+        payload = ('{"loops_per_s":%d,"renders_per_s":%d,"worst_ms":%d,'
+                   '"free":%d,"slots":%d,"dropped_in":%d}') % (
+            loops, renders, worst, free, len(self.board.slots),
+            self.link.dropped_in)
+        self.link._queue(self.link.spec.root() + "/stats", payload.encode(), False)
 
     def _wall_clock(self):
         # 0 when the badge has never reached NTP, rather than a 1970 timestamp

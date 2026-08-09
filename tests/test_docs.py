@@ -354,3 +354,42 @@ class TestClaudeMd(unittest.TestCase):
         self.assertEqual(profile.led_offset, 1)
         self.assertIn("30", self.text)
         self.assertEqual(views_mod.EDGE_CENTRE_OFFSET_DEG, 30.0)
+
+
+class TestAdaptersDoNotExecuteConfig(unittest.TestCase):
+    """The config file is data, and data should not be handed a shell.
+
+    The adapters used to `. "$ENV_FILE"`, which runs ~/.config/edgewise/env as
+    a shell script every time a hook fires -- and a hook fires on every prompt.
+    `edgewise-env.sh` parses it instead, assigning only names it recognises.
+    """
+
+    def scripts(self):
+        return [p for p in walk(ADAPTERS, (".sh",))
+                if os.path.basename(p) != "edgewise-env.sh"]
+
+    def test_nothing_sources_the_user_config(self):
+        offenders = []
+        for path in self.scripts():
+            for line in code_only(read(path)).split("\n"):
+                stripped = line.strip()
+                if stripped.startswith((". ", "source ")) and "ENV_FILE" in stripped:
+                    offenders.append(os.path.relpath(path, ROOT))
+        self.assertEqual(offenders, [], "config file executed as shell")
+
+    def test_the_parser_assigns_only_known_names(self):
+        # An allowlist, because assigning a computed name in POSIX sh needs
+        # eval, and reaching for eval here would undo the point of parsing.
+        # code_only: the comment above the list explains *why* eval is not
+        # used, and scanning prose would make saying so the thing that fails.
+        text = code_only(read(os.path.join(ADAPTERS, "shell", "edgewise-env.sh")))
+        self.assertNotIn("eval", text)
+        for name in ("EDGEWISE_ID", "EDGEWISE_BROKER", "EDGEWISE_PASS"):
+            self.assertIn(name + ")", text, name)
+
+    def test_the_environment_wins_over_the_file(self):
+        # `. file` overwrites what is already set, so a one-off override on the
+        # command line was silently ignored -- while the README promised it
+        # worked. Parsing only fills in what is unset.
+        text = read(os.path.join(ADAPTERS, "shell", "edgewise-env.sh"))
+        self.assertIn("|| EDGEWISE_ID=$2", text)

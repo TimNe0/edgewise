@@ -54,11 +54,11 @@ die()  { warn "$*"; exit 2; }
 # ---------------------------------------------------------------- config
 
 ENV_FILE=${EDGEWISE_ENV:-$HOME/.config/edgewise/env}
-if [ -r "$ENV_FILE" ]; then
-    # Sourced, not parsed, so the file is plain shell and can be commented.
-    # It is yours; nothing downloads it and nothing writes to it but you.
-    . "$ENV_FILE"
-fi
+# Parsed, not sourced: see edgewise-env.sh for why a config file should not be
+# handed a shell, and why the environment now wins over the file rather than
+# the other way round.
+. "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)/edgewise-env.sh"
+load_edgewise_env "$ENV_FILE"
 
 : "${EDGEWISE_PORT:=1883}"
 : "${EDGEWISE_PREFIX:=edgewise}"
@@ -134,9 +134,9 @@ digest6() {
     fi
 }
 
-# A slot name becomes one level of an MQTT topic, so separators and wildcards
-# have to go. Lowercased and truncated so the same project lands on the same
-# slot however it was spelled.
+# Lowercased and truncated, so the same project lands on the same slot however
+# it was spelled.
+#
 # A slot name ends up in four places with four different sets of dangerous
 # characters: an MQTT topic (/ # +), a JSON string (" \), a shell `case` pattern
 # (* ? [) and a grep -E pattern (. | ( ) [ *). An allowlist is the only version
@@ -150,11 +150,12 @@ slot_name() {
         | cut -c1-16
 }
 
-# An empty payload with retain=1 is the MQTT retained-clear idiom and is how a
-# slot is deleted. Unquoted $EDGEWISE_ID on purpose: word splitting is how a
-# list of badges becomes a loop, and a device ID is 26 characters of base32 so
-# it can never contain anything a shell would object to.
 # publish <topic-suffix> <payload> <retain: 1|0>, to every configured badge.
+#
+# An empty payload with retain=1 is the MQTT retained-clear idiom and is how a
+# slot is deleted. $EDGEWISE_ID is unquoted on purpose: word splitting is how a
+# list of badges becomes a loop, and a device ID is 26 characters of base32, so
+# it can never contain anything a shell would object to.
 publish() {
     for _id in $EDGEWISE_ID; do
         _publish_one "$_id" "$1" "$2" "$3"

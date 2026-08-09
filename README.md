@@ -51,6 +51,29 @@ That is the whole protocol. `-r` matters: the badge keeps no state that matters
 and rebuilds the board from retained messages every time it reconnects, so a
 slot published without it disappears at the next reboot.
 
+## No MQTT client? Poke it with a URL
+
+Webhooks, phone shortcuts, a browser bookmark, `curl` in a Makefile — none of
+those speak MQTT. [The HTTP bridge](adapters/http/README.md) runs on any machine
+on your network and turns a URL into a badge:
+
+```sh
+adapters/http/edgewise-http.py --token hunter2
+
+curl -H "X-Edgewise-Token: hunter2" "http://desk:8420/slot/build?state=error"
+```
+
+It can also wait for you:
+
+```sh
+curl -H "X-Edgewise-Token: hunter2" --max-time 310 "http://desk:8420/wait/deploy"
+# blocks until you acknowledge or deny that edge on the badge
+```
+
+which makes the badge an approval gate for anything that can call a URL. The
+badge itself has no HTTP client and never will — read
+[docs/security.md](docs/security.md) before treating a tap as an authorisation.
+
 ## Read this before you point it at a public broker
 
 Anyone who knows your device ID can publish to your board. There is no way

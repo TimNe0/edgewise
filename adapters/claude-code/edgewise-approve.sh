@@ -28,7 +28,10 @@ set -u
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PUB=${EDGEWISE_PUB:-$DIR/../shell/edgewise-pub.sh}
 ENV_FILE=${EDGEWISE_ENV:-$HOME/.config/edgewise/env}
-[ -r "$ENV_FILE" ] && . "$ENV_FILE"
+# Parsed rather than sourced. This script decides whether a command runs, so
+# it is the last place that should be executing a config file.
+. "$DIR/../shell/edgewise-env.sh"
+load_edgewise_env "$ENV_FILE"
 
 : "${EDGEWISE_APPROVE:=0}"
 : "${EDGEWISE_APPROVE_TIMEOUT:=60}"

@@ -175,6 +175,29 @@ you should be reading the approve-from-badge section rather than this one. A
 timeout returns 408 rather than a 200 with nothing in it, precisely so a caller
 cannot read "no answer" as approval.
 
+## The config file is data, not a script
+
+`~/.config/edgewise/env` holds your broker password, and the shell adapters used
+to read it with `. "$ENV_FILE"` — which runs it as a shell script. Anyone who
+could write that file had code execution as you, every time a hook fired, and a
+hook fires on every prompt. That was already true of anything in your home
+directory, so it was never a dramatic escalation; it was simply no way to treat
+a config file.
+
+They parse it now (`adapters/shell/edgewise-env.sh`), assigning only names they
+recognise, so a stray line cannot set `PATH` or `IFS` either. Two things fall
+out of that:
+
+- **The environment wins over the file.** Sourcing overwrote variables already
+  set, so `EDGEWISE_EDGE=0 edgewise-pub.sh …` was silently ignored whenever the
+  file also set it — while the README promised the override worked.
+- **You get told if the file is readable by others.** It has a password in it;
+  `chmod 600` is in the setup instructions and is now checked at runtime.
+
+The HTTP bridge warns if its token came from the command line rather than the
+environment, because `ps` shows argv to every user on the machine and your shell
+history keeps it afterwards.
+
 ## Recommended setups, best first
 
 1. **Home Assistant's Mosquitto add-on**, or any LAN broker, with a username

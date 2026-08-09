@@ -42,7 +42,7 @@ def _off_pattern():
         return None
 
 
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1

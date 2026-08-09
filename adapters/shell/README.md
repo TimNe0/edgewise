@@ -86,6 +86,11 @@ replaced with `-`, because a slot name is one level of an MQTT topic.
 Anything set in the environment beats the env file, so a one-off override is
 `EDGEWISE_EDGE=0 edgewise-pub.sh kiln working`.
 
+The file is **parsed, not sourced** — it is data, not a script, and running it
+would hand code execution to anyone who could write it. Only the names above are
+recognised; anything else in the file is ignored. `chmod 600` it: it holds a
+broker password, and the adapters will warn you if it is readable by others.
+
 ## Wrapping a command
 
 ```sh

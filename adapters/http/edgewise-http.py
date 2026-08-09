@@ -370,6 +370,15 @@ def main():
         # reach this, and a bridge with no token is a badge anyone can drive.
         sys.exit("--token is required (or set EDGEWISE_HTTP_TOKEN).")
 
+    if args.token != os.environ.get("EDGEWISE_HTTP_TOKEN"):
+        # argv is world-readable on most systems: `ps` shows it to every user
+        # on the machine, and shell history keeps it after that.
+        sys.stderr.write(
+            "edgewise-http: the token was given on the command line, where ps\n"
+            "               shows it to every user on this machine and your\n"
+            "               shell history keeps it. Prefer EDGEWISE_HTTP_TOKEN\n"
+            "               in ~/.config/edgewise/env.\n")
+
     bridge = Bridge(load_env())
     server = ThreadingHTTPServer((args.listen, args.port),
                                  make_handler(bridge, args.token))

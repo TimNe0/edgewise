@@ -98,7 +98,10 @@ def main():
     ap.add_argument("--duration", type=int, default=60, help="seconds")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--profile", choices=PROFILES, default="all")
-    ap.add_argument("--rate", type=float, default=20.0, help="messages/second")
+    ap.add_argument("--rate", type=float, default=20.0,
+                help="generator calls/second, NOT messages/second -- the "
+                     "burst generators send tens of messages each, so 20 "
+                     "here measured ~970 msg/s against a badge")
     args = ap.parse_args()
 
     root = "%s/%s" % (args.prefix, args.id)

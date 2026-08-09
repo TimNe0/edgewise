@@ -69,7 +69,7 @@ re-clear on every single reconnect.
 | `edge` | no | 0–5 | pins the slot to one edge; everything else auto-lays-out around it |
 | `ttl` | no | 1–86400 s | default 3600. The edge fades out when it expires |
 | `ts` | no | int | publisher's clock, seconds. Advisory in unsigned mode |
-| `sig` | no | ≤64 chars | HMAC, signed mode only — **not implemented yet (M6)** |
+| `sig` | no | 64 chars | HMAC-SHA256, hex. Required when the badge is in signed mode — see below |
 
 Slot names come from the topic. Up to 12 slots are tracked; the six most urgent
 are displayed. Unknown fields are ignored — not rejected, ignored — so you can
@@ -225,6 +225,65 @@ Retained, `online` / `offline`. Set as the MQTT **Last Will**, so the broker
 publishes `offline` if the badge drops off the Wi-Fi without saying goodbye —
 which is the case that matters, because a badge that has quietly died looks
 exactly like a badge with nothing to report.
+
+## Signed mode
+
+Anyone who learns your device ID can publish to your board. On a broker you own
+that is fine; on a shared one it is not. Turn on **Settings → Device ID →
+Require signed** with a key set, and the badge ignores anything it cannot verify.
+
+The signature covers a **canonical string**, not the JSON bytes — key order and
+whitespace vary between publishers, so signing the bytes would verify from one
+language and fail from another:
+
+```
+<topic suffix>
+<ts>
+<key>=<value>
+<key>=<value>...
+```
+
+Fields appear in a fixed order and are skipped when absent:
+
+| Topic | Signed fields, in order |
+|---|---|
+| `slot/<name>` | `state` `label` `msg` `edge` `ttl` |
+| `text` | `msg` `level` `duration` |
+| `weather` | `cond` `temp` `rain` `unit` `ttl` |
+| `led` | `segment` `leds` `effect` `rgb` `rgb2` `speed` `intensity` `brightness` `ttl` |
+| `event` | `type` `slot` `edge` — **outbound**, signed by the badge |
+
+`sig` is the lower-case hex HMAC-SHA256 of that string. So for a slot:
+
+```sh
+KEY=correct-horse-battery-staple
+TS=$(date +%s)
+CANON="slot/kiln
+$TS
+state=needs_you
+label=kiln
+ttl=1800"
+SIG=$(printf '%s' "$CANON" | openssl dgst -sha256 -hmac "$KEY" -r | cut -d' ' -f1)
+mosquitto_pub -h $BROKER -t "edgewise/$ID/slot/kiln" -r -m   "{\"state\":\"needs_you\",\"label\":\"kiln\",\"ttl\":1800,\"ts\":$TS,\"sig\":\"$SIG\"}"
+```
+
+Or set `EDGEWISE_HMAC_KEY` and let [the adapters](../adapters/shell/README.md)
+do it.
+
+**`ts` becomes mandatory and meaningful.** A signature is refused if the
+timestamp is more than 60 seconds from the badge's clock, which is what stops a
+captured message being replayed later — and why the badge syncs over NTP. An
+exact repeat inside that minute is refused too.
+
+**The badge signs its own `event` messages** whenever a key is set, whether or
+not `require_signed` is on. Signed mode is not only about what reaches the
+badge: on an open broker anyone who knows the device ID can forge an `ack`, and
+an `ack` is what an approval flow turns into permission to run a command. A
+subscriber that checks the signature knows the tap really happened.
+
+**What it does not do.** Signing is not encryption: labels and messages are
+still readable by anyone watching the broker. `EDGEWISE_LABELS=hash` is the
+answer to that. And it protects MQTT — the HTTP door has its own token.
 
 ## The other door: HTTP, on the badge itself
 

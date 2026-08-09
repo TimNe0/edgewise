@@ -33,6 +33,7 @@ _edgewise_assign() {
     EDGEWISE_TTL)            [ -n "${EDGEWISE_TTL:-}" ]            || EDGEWISE_TTL=$2 ;;
     EDGEWISE_EDGE)           [ -n "${EDGEWISE_EDGE:-}" ]           || EDGEWISE_EDGE=$2 ;;
     EDGEWISE_LABELS)         [ -n "${EDGEWISE_LABELS:-}" ]         || EDGEWISE_LABELS=$2 ;;
+    EDGEWISE_HMAC_KEY)       [ -n "${EDGEWISE_HMAC_KEY:-}" ]       || EDGEWISE_HMAC_KEY=$2 ;;
     EDGEWISE_MOSQUITTO)      [ -n "${EDGEWISE_MOSQUITTO:-}" ]      || EDGEWISE_MOSQUITTO=$2 ;;
     EDGEWISE_PUB)            [ -n "${EDGEWISE_PUB:-}" ]            || EDGEWISE_PUB=$2 ;;
     EDGEWISE_RUN_TTL)        [ -n "${EDGEWISE_RUN_TTL:-}" ]        || EDGEWISE_RUN_TTL=$2 ;;

@@ -224,3 +224,32 @@ class TestEveryItemIsReachableAndSane(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSignedModeIsHonest(unittest.TestCase):
+    """"Require signed" persisted a preference nothing read, from M0 until
+    v0.12.0. The settings screen must not imply it is doing something."""
+
+    def setUp(self):
+        self.m = prefs.SettingsModel(make_cfg())
+
+    def item(self, key):
+        self.m.group = "device"
+        items = self.m.items()
+        self.m.index = next(i for i, it in enumerate(items) if it.key == key)
+        return self.m.current()
+
+    def test_without_a_key_it_says_no_key_rather_than_off(self):
+        self.assertEqual(self.m.summary(self.item("require_signed")), "no key")
+
+    def test_with_a_key_it_reads_normally(self):
+        self.m.cfg = prefs.put(self.m.cfg, "hmac_key", "s3cret")
+        item = self.item("require_signed")
+        self.assertEqual(self.m.summary(item), "off")
+        self.m.select()
+        self.assertEqual(self.m.summary(item), "on")
+
+    def test_the_key_is_never_rendered(self):
+        item = self.item("hmac_key")
+        self.m.apply(item, "correct-horse")
+        self.assertNotIn("horse", self.m.summary(item))

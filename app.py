@@ -22,7 +22,7 @@ from system.patterndisplay.events import (
 )
 
 from . import boards, clock, conf as C, demo as demo_mod, gestures as gest
-from . import httpd, prefs, timesync as timesync_mod
+from . import httpd, prefs, signing, timesync as timesync_mod
 from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as touch_mod
 from . import views
 from .render_ctx import CtxRenderer
@@ -61,7 +61,7 @@ def _off_pattern():
         return None
 
 
-VERSION = "0.11.0"
+VERSION = "0.12.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -147,6 +147,10 @@ class EdgewiseApp(app.App):
         # render loop. This is what stops a publisher filling the board faster
         # than anyone could read it.
         self.limiter = security.RateLimiter()
+        # Signed mode. The settings screen has offered this since M0 while
+        # nothing read it; it reads it now.
+        self.verifier = signing.Verifier(self.cfg["hmac_key"])
+        self._unsigned_notice_ms = 0
         self._seen_epoch = 0
         self._rebuilding = False
         self._flood_notice_ms = 0
@@ -285,16 +289,45 @@ class EdgewiseApp(app.App):
             if not rebuilding and not self.limiter.allow(now):
                 self._note_flood(now)
                 continue
+            # Parsed once, here, so signed mode has something to check and the
+            # handlers are not each re-parsing the same bytes.
             if kind == "slot":
-                self._apply_slot(name, payload, now)
+                parsed = security.parse_slot(payload)
             elif kind == "led":
-                spec = security.parse_led(payload)
-                if spec:
-                    self.engine.set_raw(spec, now)
+                parsed = security.parse_led(payload)
             elif kind == "text":
-                self._show_message(security.parse_text(payload), now)
-            elif kind == "weather":
-                self._show_weather(security.parse_weather(payload), now)
+                parsed = security.parse_text(payload)
+            else:
+                parsed = security.parse_weather(payload)
+            if parsed is None:
+                continue
+
+            if self.cfg["require_signed"]:
+                suffix = "slot/%s" % name if kind == "slot" else kind
+                if not self.verifier.verify(suffix, parsed, self._wall_clock()):
+                    self._note_unsigned(now)
+                    continue
+
+            if kind == "slot":
+                self._apply_slot(name, parsed, now)
+            elif kind == "led":
+                self.engine.set_raw(parsed, now)
+            elif kind == "text":
+                self._show_message(parsed, now)
+            else:
+                self._show_weather(parsed, now)
+
+    def _note_unsigned(self, now):
+        """Say it once in a while, rather than on every rejected message.
+
+        A misconfigured publisher will send hundreds; a notification per message
+        would be its own denial of service. The count goes out in the stats
+        topic for anyone actually debugging it.
+        """
+        if clock.elapsed_ms(self._unsigned_notice_ms, now) < 10000:
+            return
+        self._unsigned_notice_ms = now
+        self.notification = Notification("Unsigned - ignored")
 
     def _apply_slot(self, name, payload, now):
         name = security.clean_text(name, 24)
@@ -1046,6 +1079,20 @@ class EdgewiseApp(app.App):
             self.pads = gest.PadReader(self.profile)
         elif key.startswith("broker.") or key == "device_id":
             self._open_link()
+        elif key == "hmac_key":
+            self.verifier = signing.Verifier(self.cfg["hmac_key"])
+        elif key == "require_signed" and self.cfg["require_signed"]:
+            # Refuse to switch on a check that cannot run. Leaving it on with no
+            # key -- or on a build with no hashing -- would put the badge back
+            # exactly where it was: a security control that appears to be on and
+            # verifies nothing.
+            if not self.verifier.usable():
+                self.cfg = prefs.put(self.cfg, "require_signed", False)
+                self.prefs.cfg = self.cfg
+                C.save(self.cfg)
+                self.notification = Notification(
+                    "Set a signing key first" if signing.available()
+                    else "No hashing on this build")
         elif key.startswith("http"):
             # _serve_http notices on its next pass; dropping it here is what
             # makes "turn it off" mean the socket actually closes.
@@ -1170,9 +1217,21 @@ class EdgewiseApp(app.App):
         # that assumption stops being obvious -- so re-check it here.
         name = (name or "").replace('"', "").replace("\\", "")
         slot = '"%s"' % name if name else "null"
-        payload = '{"type":"%s","slot":%s,"edge":%s,"ts":%d}' % (
-            kind, slot, edge if edge is not None else "null", self._wall_clock())
-        self.link.publish_event(payload.encode())
+        ts = self._wall_clock()
+        payload = '{"type":"%s","slot":%s,"edge":%s,"ts":%d' % (
+            kind, slot, edge if edge is not None else "null", ts)
+
+        # Signed outbound too, when a key is set. A subscriber that checks this
+        # knows the tap happened on this badge rather than being forged by
+        # anyone who learned the device ID -- which matters most for the flow
+        # that turns an ack into permission to run a command.
+        if self.cfg["hmac_key"] and ts:
+            fields = {"type": kind, "slot": name or None,
+                      "edge": edge if edge is not None else None}
+            sig = signing.sign(self.cfg["hmac_key"], "event", fields, ts)
+            if sig:
+                payload += ',"sig":"%s"' % sig
+        self.link.publish_event((payload + "}").encode())
 
     def _publish_stats(self):
         """Loop rate, worst iteration, renders, free heap. Not retained.
@@ -1212,10 +1271,11 @@ class EdgewiseApp(app.App):
         payload = ('{"loops_per_s":%d,"renders_per_s":%d,"worst_ms":%d,'
                    '"free":%d,"slots":%d,"dropped_in":%d,"path":"%s",'
                    '"leds":%d,"offset":%d,"compose_ms":%d,"write_ms":%d,'
-                   '"ms":{%s}}') % (
+                   '"unsigned":%d,"ms":{%s}}') % (
             loops, renders, worst, free, len(self.board.slots),
             self.link.dropped_in, engine.path(), self.profile.led_count,
-            self.profile.led_offset, compose_ms, write_ms, phases)
+            self.profile.led_offset, compose_ms, write_ms,
+            self.verifier.rejected, phases)
         self.link.publish_status("stats", payload.encode())
 
     def _wall_clock(self):

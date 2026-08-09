@@ -76,6 +76,7 @@ replaced with `-`, because a slot name is one level of an MQTT topic.
 | `EDGEWISE_TTL` | default 3600. How long an edge survives without an update |
 | `EDGEWISE_EDGE` | `0`–`5`. Pins a slot to one edge instead of letting the layout move it |
 | `EDGEWISE_LABELS` | `name` (default) or `hash` — see Privacy below |
+| `EDGEWISE_HMAC_KEY` | signing key, when the badge is in signed mode. Needs `openssl`; without it the publisher refuses rather than sending unsigned |
 | `EDGEWISE_MOSQUITTO` | full path to `mosquitto_pub`, if it is not on `PATH`. Searched automatically in Program Files, homebrew and /usr/local/bin — a hook fired by an editor does not inherit the PATH you set it up in |
 | `EDGEWISE_ENV` | path to the env file, if not `~/.config/edgewise/env` |
 | `EDGEWISE_PUB` | path to the publisher, for `run-and-report` and the other adapters |
@@ -130,6 +131,23 @@ pip install paho-mqtt
 ```
 
 Point `run-and-report` at it with `EDGEWISE_PUB=/path/to/edgewise_pub.py`.
+
+## Signed mode
+
+If the badge has **Require signed** on, set the same key here:
+
+```sh
+EDGEWISE_HMAC_KEY=correct-horse-battery-staple
+```
+
+Slot updates are then signed automatically. `--text` and `--weather` cannot sign
+from the shell yet and will refuse rather than send something the badge will
+silently drop — use `edgewise_pub.py`, which signs everything.
+
+Signing needs `openssl` for the HMAC. Without it, a configured key makes the
+publisher exit 2 rather than publish unsigned: a message a badge in signed mode
+throws away looks exactly like a broken badge, and finding that out at the badge
+is much slower than being told here.
 
 ## Privacy
 

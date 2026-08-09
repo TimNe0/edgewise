@@ -265,6 +265,9 @@ class SettingsModel:
             return ""
         value = get(self.cfg, item.key)
         if item.kind == KIND_TOGGLE:
+            if item.key == "require_signed" and not value:
+                # "off" alone invites turning it on and believing it worked.
+                return "off" if get(self.cfg, "hmac_key") else "no key"
             return "on" if value else "off"
         if item.kind == KIND_PASSWORD:
             # Never render a secret, not even on a 240-pixel screen somebody is

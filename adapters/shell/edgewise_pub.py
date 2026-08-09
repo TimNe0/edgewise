@@ -18,12 +18,59 @@ that can break a build is worse than no status board.
 """
 
 import hashlib
+import hmac
 import json
 import os
 import re
 import sys
+import time
 
 STATES = ("working", "needs_you", "done", "error", "info")
+
+# The fields each topic signs, in the order they are signed. This has to match
+# signing.FIELDS on the badge exactly -- a mismatch means every message is
+# rejected, so tests/test_signing_adapters.py compares the two implementations
+# rather than trusting that they were written to the same list.
+SIGN_FIELDS = {
+    "slot": ("state", "label", "msg", "edge", "ttl"),
+    "text": ("msg", "level", "duration"),
+    "weather": ("cond", "temp", "rain", "unit", "ttl"),
+    "led": ("segment", "leds", "effect", "rgb", "rgb2", "speed", "intensity",
+            "brightness", "ttl"),
+}
+
+
+def canonical(suffix, payload, ts):
+    """The exact string the badge will hash. Named fields in a fixed order,
+    never the JSON bytes: key order and whitespace vary between publishers, and
+    a signature that only verifies from one language is not a signature."""
+    parts = [suffix, str(ts)]
+    for key in SIGN_FIELDS.get(suffix.split("/")[0], ()):
+        value = payload.get(key)
+        if value is None or value == "":
+            continue
+        if isinstance(value, (tuple, list)):
+            value = ",".join(str(part) for part in value)
+        parts.append("%s=%s" % (key, value))
+    return "\n".join(parts)
+
+
+def add_signature(env, suffix, payload):
+    """Sign in place, if a key is configured. Returns False if it could not.
+
+    Fails closed and loudly: a publisher that quietly sends unsigned messages to
+    a badge in signed mode looks exactly like a broken badge.
+    """
+    key = env.get("EDGEWISE_HMAC_KEY")
+    if not key:
+        return True
+    ts = int(time.time())
+    payload["ts"] = ts
+    payload["sig"] = hmac.new(key.encode(),
+                              canonical(suffix, payload, ts).encode(),
+                              hashlib.sha256).hexdigest()
+    return True
+
 
 DEFAULTS = {
     "EDGEWISE_PORT": "1883",
@@ -213,6 +260,7 @@ def main(argv):
 
     # Retained, always: the badge rebuilds the whole board from retained
     # messages when it reconnects.
+    add_signature(env, "slot/%s" % name, payload)
     publish(env, "slot/%s" % name, json.dumps(payload), True)
     return 0
 

@@ -95,6 +95,10 @@ around that in MQTT without a broker that authenticates, so:
 - **An ack is an observation, not an authorisation.** The badge reports that
   someone pressed something. What that *means* is decided entirely by whatever
   is subscribed.
+- **Signed mode** (Settings → Device ID) makes the badge ignore anything without
+  a valid HMAC, so knowing your device ID is no longer enough to write to your
+  board — and it signs its own events so a subscriber can tell a real tap from a
+  forged one.
 
 The full version, including the parts that cannot be fixed — the broker
 password is stored in plaintext, because the badge has no keystore — is

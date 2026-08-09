@@ -39,6 +39,7 @@ Config, read from ~/.config/edgewise/env (or $EDGEWISE_ENV) and the environment:
   EDGEWISE_TTL      default 3600 seconds; the edge fades out after this
   EDGEWISE_EDGE     optional 0-5, pins the slot to one edge
   EDGEWISE_LABELS   name (default) or hash
+  EDGEWISE_HMAC_KEY signing key, if the badge is in signed mode. Needs openssl
   EDGEWISE_MOSQUITTO  full path to mosquitto_pub, if it is somewhere unusual
 
 Privacy: slot names are usually project names, and the topic itself leaks them
@@ -117,6 +118,39 @@ is_int() {
     -*) case "${1#-}" in ""|*[!0-9]*) return 1 ;; esac ;;
     esac
     [ "$1" -ge "$2" ] 2>/dev/null && [ "$1" -le "$3" ] 2>/dev/null
+}
+
+# HMAC-SHA256 of a canonical string, hex. openssl is the only thing in a base
+# POSIX toolbox that can do this; where it is missing and a key is configured
+# this refuses to publish rather than sending unsigned traffic a badge in signed
+# mode will silently drop -- which looks exactly like a broken badge.
+sign_hex() {
+    have openssl || die "EDGEWISE_HMAC_KEY is set but openssl is missing -- install it, or use edgewise_pub.py"
+    printf '%s' "$1"         | openssl dgst -sha256 -hmac "$EDGEWISE_HMAC_KEY" -r 2>/dev/null         | cut -d' ' -f1
+}
+
+# Append ts and sig to a payload, given the canonical field lines.
+#
+# The canonical form is the topic suffix, the timestamp, then key=value lines in
+# the fixed order signing.py lists -- one per line, never the JSON bytes. Key
+# order and whitespace vary between publishers, so a signature over the bytes
+# would verify from one language and fail from another.
+add_signature() {
+    _suffix=$1
+    _fields=$2
+    [ -n "${EDGEWISE_HMAC_KEY:-}" ] || return 0
+    _ts=$(date +%s)
+    if [ -n "$_fields" ]; then
+        _canon="$_suffix
+$_ts
+$_fields"
+    else
+        _canon="$_suffix
+$_ts"
+    fi
+    _sig=$(sign_hex "$_canon")
+    [ -n "$_sig" ] || die "signing failed"
+    payload="$payload,\"ts\":$_ts,\"sig\":\"$_sig\""
 }
 
 digest6() {
@@ -243,6 +277,7 @@ EOF
     ;;
 --weather)
     require_config
+    [ -z "${EDGEWISE_HMAC_KEY:-}" ] || die "--weather cannot sign yet; use edgewise_pub.py"
     [ $# -ge 2 ] || die "usage: $PROG --weather <cond> [temp] [rain%]"
     case "$2" in
     clear|part|cloud|rain|snow|storm|fog|wind) ;;
@@ -269,6 +304,7 @@ EOF
     ;;
 --text)
     require_config
+    [ -z "${EDGEWISE_HMAC_KEY:-}" ] || die "--text cannot sign yet; use edgewise_pub.py"
     [ $# -ge 2 ] || die "usage: $PROG --text <message> [info|alert]"
     level=${3:-info}
     [ "$level" = "alert" ] || level=info
@@ -294,6 +330,8 @@ esac
 
 name=$(slot_name "$1")
 payload="{\"state\":\"$state\""
+# The canonical lines, in signing.py's field order: state,label,msg,edge,ttl.
+CANON="state=$state"
 if [ "$EDGEWISE_LABELS" = "hash" ]; then
     # No label field at all: the badge falls back to the slot name, which is
     # the digest, which is the point. The message goes too -- it is usually a
@@ -302,8 +340,12 @@ if [ "$EDGEWISE_LABELS" = "hash" ]; then
     name=$(digest6 "$name")
 else
     payload="$payload,\"label\":\"$(json_escape "$name" 16)\""
+    CANON="$CANON
+label=$(json_escape "$name" 16)"
     if [ -n "${3:-}" ]; then
         payload="$payload,\"msg\":\"$(json_escape "$3" 64)\""
+        CANON="$CANON
+msg=$(json_escape "$3" 64)"
     fi
 fi
 # `if` rather than `[ x ] && y` throughout: an AND-list whose test fails is the
@@ -311,8 +353,14 @@ fi
 # with everything looking like it worked.
 if [ -n "${EDGEWISE_EDGE:-}" ]; then
     payload="$payload,\"edge\":$EDGEWISE_EDGE"
+    CANON="$CANON
+edge=$EDGEWISE_EDGE"
 fi
-payload="$payload,\"ttl\":$EDGEWISE_TTL}"
+payload="$payload,\"ttl\":$EDGEWISE_TTL"
+CANON="$CANON
+ttl=$EDGEWISE_TTL"
+add_signature "slot/$name" "$CANON"
+payload="$payload}"
 
 # Retained, always. The badge holds no state that matters and rebuilds the whole
 # board from retained messages when it reconnects; a slot published without the

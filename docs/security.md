@@ -39,7 +39,7 @@ model below.
 | Strobe attack | A photosensitive-seizure risk, and the one thing here that can hurt someone | 3 Hz cap enforced structurally, not by policy. No setting disables it |
 | Screen-text abuse | Someone puts something unpleasant on your desk | 64 chars, printable ASCII only, ≤300 s, never retained |
 | Flooding | Board becomes unreadable, heap pressure | Token bucket at ~5 msg/s, burst 10; bounded inbox that drops the newest; a drain cap so a burst cannot miss frames |
-| Replay of a captured `ack` | Real, and the reason signed mode exists | Events are never retained. Signed mode (M6) adds HMAC + a 60 s freshness window |
+| Replay of a captured `ack` | Real, and the reason signed mode exists | Events are never retained. Signed mode adds HMAC-SHA256, a 60 s freshness window, and refusal of exact repeats inside it |
 | Malicious installer script | The usual supply-chain worry | Every installer is short, reviewable, idempotent, needs no sudo, and never pipes from the network |
 | Someone on your LAN reaching the badge over HTTP | Real, and the only listener in the project | Off by default; a token, shown on the device screen; every bound checked before any work; the same validators and rate limit as MQTT. The token is in the clear, so it guards against accidents rather than attackers |
 
@@ -138,6 +138,40 @@ see the requested command in the `msg` field, and on an unauthenticated broker
 they can publish a fake `ack` on your event topic that your hook will believe.
 That is the whole reason for the refusal. Signed mode (M6) closes it; until
 then, private broker or nothing.
+
+## Signed mode
+
+Since v0.12.0 the badge can require every inbound message to carry an
+HMAC-SHA256 over a canonical form of its own fields, including a timestamp. With
+it on, knowing the device ID is no longer enough to write to your board.
+
+`docs/protocol.md` has the canonical form and a worked `openssl` example. What
+matters here is the shape of the guarantees:
+
+- **Forgery is stopped.** Without the key you cannot produce a signature the
+  badge accepts.
+- **Replay is bounded.** A signature is refused more than 60 seconds from the
+  badge's clock, and an exact repeat inside that window is refused too. This is
+  why the badge syncs time over NTP — a freshness window against an unknown
+  clock is a coin toss, not a check.
+- **The badge signs its own events** whenever a key is set. On an open broker
+  anyone who knows your device ID could otherwise forge an `ack`, and an `ack`
+  is what an approval flow turns into permission to run a command.
+- **It is not encryption.** Labels and messages remain readable to anyone
+  watching the broker. `EDGEWISE_LABELS=hash` is the answer to that.
+- **It fails closed.** No key, no clock, an unparseable signature, or a build
+  with no `hashlib` all mean *refuse*. The settings screen will not let you
+  enable the toggle when it would not actually check anything — it shows "no
+  key" rather than "off", and turning it on without a key turns itself back off
+  and says why.
+
+The key is stored in the badge's shared settings file in plaintext, like the
+broker password, for the reasons under "Things we cannot fix" below.
+
+**The approve-from-badge flow still requires an authenticated broker or TLS.**
+Signed mode makes the badge's events verifiable, but `edgewise-approve.sh` does
+not yet check them, so the gate has not moved. Verifying there is the next step,
+not a thing to assume.
 
 ## The badge's HTTP door
 

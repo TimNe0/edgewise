@@ -127,6 +127,11 @@ Each of these cost a release to find. Do not re-derive them.
 - **LED work belongs in `background_update()`**, which the firmware runs for
   every app, and which is where the OS drives its own ring. Inline in the
   foreground loop it becomes button latency.
+- **Signed mode is real** (`signing.py`), and HMAC is written out from
+  `hashlib.sha256` because MicroPython has the hash and not the `hmac` module.
+  The canonical form is named fields in a fixed order, never the JSON bytes --
+  three implementations have to agree (badge, `edgewise_pub.py`,
+  `edgewise-pub.sh` via openssl) and a test compares them.
 - **The badge reports its own timing** to `<root>/stats` every ten seconds:
   loop rate, worst iteration, free heap, which LED write path bound. Measure
   before optimising; four guesses from the desktop were wrong.

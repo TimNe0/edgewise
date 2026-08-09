@@ -350,6 +350,13 @@ class LedEngine:
         # with a status -- otherwise "is that edge telling me something?" stops
         # having an answer.
         self.idle = False
+        # Hardware binding, resolved on first write and then never again.
+        self._bound = False
+        self._leds = None
+        self._strip = None
+        self._buf_out = None
+        self._order = (1, 0, 2)
+        self._bpp = 3
         self.palette = "default"
         if cfg:
             self.configure(cfg)
@@ -503,18 +510,69 @@ class LedEngine:
         j = seg[0] * 3
         return (self._out[j], self._out[j + 1], self._out[j + 2])
 
-    def _write(self):
-        # Imported lazily so this module stays importable under CPython.
+    def _bind(self):
+        """Find the raw NeoPixel buffer behind the OS's wrapper, once.
+
+        `tildagonos.leds` is a ComposedNeoPixel, and its __setitem__ allocates a
+        list, builds a zip and calls sorted() -- for every LED, on every frame.
+        Assigning a 3-tuple per LED on top of that put roughly forty short-lived
+        objects per frame on the heap, twenty times a second, on a loop this
+        project's own rules say must not allocate at all. The badge measured
+        6 Hz with the collector running constantly.
+
+        The OS's own boot animation looks flawless on the same ring because it
+        ends up in the native driver's byte buffer. So do we now: bind once to
+        that buffer and blit into it, which allocates nothing per frame.
+
+        Everything here is feature-detected. A wrapper that hides its buffer, or
+        a future firmware that changes the shape, falls back to the slow path
+        rather than to a dark ring.
+        """
         try:
             from tildagonos import tildagonos
         except ImportError:
             return False
-        offset = self.profile.led_offset
+        self._leds = tildagonos.leds
+        strings = getattr(tildagonos.leds, "strings", None)
+        if strings:
+            raw = strings[0]
+            buf = getattr(raw, "buf", None)
+            order = getattr(raw, "ORDER", None)
+            if buf is not None and order is not None and len(order) >= 3:
+                # WS2812 wants GRB, and ORDER is how the driver says so.
+                self._buf_out = buf
+                self._order = (order[0], order[1], order[2])
+                self._bpp = getattr(raw, "bpp", 3)
+                self._strip = raw
+        self._bound = True
+        return True
+
+    def _write(self):
+        if not self._bound and not self._bind():
+            return False
         out = self._out
+        offset = self.profile.led_offset
+
+        buf = self._buf_out
+        if buf is not None:
+            r, g, b = self._order
+            bpp = self._bpp
+            for i in range(self._n):
+                j = i * 3
+                k = (i + offset) * bpp
+                buf[k + r] = out[j]
+                buf[k + g] = out[j + 1]
+                buf[k + b] = out[j + 2]
+            self._strip.write()
+            return True
+
+        # Fallback: correct, and the reason the fast path can be feature-gated
+        # without risking a badge that shows nothing.
+        leds = self._leds
         for i in range(self._n):
             j = i * 3
-            tildagonos.leds[i + offset] = (out[j], out[j + 1], out[j + 2])
-        tildagonos.leds.write()
+            leds[i + offset] = (out[j], out[j + 1], out[j + 2])
+        leds.write()
         return True
 
     def all_off(self):

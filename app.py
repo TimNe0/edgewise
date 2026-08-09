@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -46,7 +46,7 @@ LED_INTERVAL_MS = 50
 SCREEN_INTERVAL_MS = 200
 IDLE_REDRAW_MS = 1000
 # The OS pattern generator has to be told repeatedly to keep off the ring.
-PATTERN_SUPPRESS_MS = 1000
+PATTERN_SUPPRESS_MS = 10000
 
 # How often the badge reports its own loop timing. Buttons are polled once per
 # iteration, so the loop rate *is* the input latency: at 5 Hz a press has to be
@@ -147,6 +147,11 @@ class EdgewiseApp(app.App):
 
         self._loops = 0
         self._renders = 0
+        self._hhmm_cache = None
+        self._hhmm_at_ms = -99999
+        # Bumped whenever the weather changes, so the redraw check can compare
+        # an int instead of sorting a dict every iteration.
+        self._weather_gen = 0
         # Milliseconds spent in each phase over the stats window. The loop is
         # running at 6 Hz on an idle badge with nothing to draw, so the cost is
         # somewhere in here and guessing which has not been working.
@@ -267,6 +272,7 @@ class EdgewiseApp(app.App):
         else:
             self.weather = parsed
             self.weather_until_ms = clock.add_ms(now, parsed["ttl"] * 1000)
+        self._weather_gen += 1
         self._dirty = True
 
     def _show_message(self, parsed, now):
@@ -424,6 +430,7 @@ class EdgewiseApp(app.App):
 
         if self.weather is not None and clock.expired(self.weather_until_ms, now):
             self.weather = None
+            self._weather_gen += 1
             self._dirty = True
         if self.message is not None and clock.expired(self.message_until_ms, now):
             self.message = None
@@ -437,11 +444,6 @@ class EdgewiseApp(app.App):
         phase("layout")
         self._drive_leds(delta, now)
         phase("leds")
-        # The redraw check runs every iteration whether or not it draws, and it
-        # builds a tuple -- including a formatted clock string and a sorted copy
-        # of the weather -- to do it. On a 20 Hz loop that is a lot of garbage.
-        self._needs_draw()
-        phase("drawcheck")
 
     def _sync_layout(self, now):
         names = self.board.names()
@@ -463,8 +465,10 @@ class EdgewiseApp(app.App):
             return
         self._led_timer = 0
 
-        # The OS pattern generator keeps trying to reclaim the ring; once a
-        # second is enough to hold it off.
+        # The OS pattern generator keeps trying to reclaim the ring. Every
+        # emit goes through the eventbus to an async handler, which costs a
+        # task, so this is a reminder rather than a heartbeat -- ten seconds of
+        # someone else's pattern has never actually been observed.
         self._pattern_timer += LED_INTERVAL_MS
         if self._pattern_timer >= PATTERN_SUPPRESS_MS:
             self._pattern_timer = 0
@@ -539,8 +543,7 @@ class EdgewiseApp(app.App):
             # these the settings list would not repaint until something
             # unrelated happened to it.
             self.prefs.group, self.prefs.index, self.snoozed,
-            self._hhmm(), self.weather and tuple(sorted(
-                (k, v) for k, v in self.weather.items())),
+            self._hhmm(), self._weather_gen,
         )
 
     def _needs_draw(self):
@@ -600,7 +603,14 @@ class EdgewiseApp(app.App):
         than no clock, because only one of the two is obviously not to be
         trusted.
         """
-        return clock.local_hhmm(self.cfg["utc_offset"])
+        # Cached: this is called from the redraw check on every iteration, and
+        # it used to format a string and read the RTC each time. The clock
+        # changes once a minute; checking five times a second is plenty and
+        # costs nothing in between.
+        if self._uptime_ms - self._hhmm_at_ms >= 200:
+            self._hhmm_at_ms = self._uptime_ms
+            self._hhmm_cache = clock.local_hhmm(self.cfg["utc_offset"])
+        return self._hhmm_cache
 
     def _demo_caption(self, r):
         r.text(self.demo.caption, 0, 62, views.FG, size=13, align="center")

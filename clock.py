@@ -98,12 +98,22 @@ CLOCK_SET_YEAR = 2024
 EMBEDDED_EPOCH_OFFSET = 946684800
 
 
+# Resolved once for the real `time` module. Deliberately not a cache keyed on
+# the module object: ids get reused after collection, and a wrong epoch that
+# only appears sometimes is far worse than one that is always wrong.
+_default_offset = None
+
+
 def epoch_offset(time_mod):
     """Seconds to add to this platform's time() to get Unix time.
 
     Asked rather than assumed: `gmtime(0)` names the platform's own epoch, so
     this works on a badge, in CPython and on any future firmware without a
     version check to keep up to date.
+
+    Cached per module, because the answer cannot change while the badge is
+    running and this sits under every timestamp the badge publishes as well as
+    under the clock on screen.
     """
     try:
         return EMBEDDED_EPOCH_OFFSET if time_mod.gmtime(0)[0] == 2000 else 0
@@ -113,7 +123,10 @@ def epoch_offset(time_mod):
 
 def wall_seconds(time_mod=None):
     """Unix seconds, or 0 when the badge does not know the date."""
-    if time_mod is None:
+    global _default_offset
+
+    injected = time_mod is not None
+    if not injected:
         try:
             import time as time_mod
         except ImportError:  # pragma: no cover - there is always time
@@ -121,7 +134,11 @@ def wall_seconds(time_mod=None):
     try:
         if time_mod.localtime()[0] < CLOCK_SET_YEAR:
             return 0
-        return int(time_mod.time()) + epoch_offset(time_mod)
+        if injected:
+            return int(time_mod.time()) + epoch_offset(time_mod)
+        if _default_offset is None:
+            _default_offset = epoch_offset(time_mod)
+        return int(time_mod.time()) + _default_offset
     except Exception:  # noqa: BLE001 - no RTC at all
         return 0
 

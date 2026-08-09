@@ -378,3 +378,100 @@ class TestIdlePattern(unittest.TestCase):
     def test_it_cannot_outrun_the_strobe_cap(self):
         # Not a special case in the cap logic, so state the margin explicitly.
         self.assertGreater(ledfx.IDLE_PERIOD_MS, ledfx.MIN_STROBE_PERIOD_MS * 100)
+
+
+class FakeStrip:
+    """A native NeoPixel: a byte buffer, an ORDER, and a write()."""
+
+    ORDER = (1, 0, 2, 3)
+
+    def __init__(self, n=19, bpp=3):
+        self.buf = bytearray(n * bpp)
+        self.bpp = bpp
+        self.n = n
+        self.writes = 0
+
+    def write(self):
+        self.writes += 1
+
+
+class FakeComposed:
+    """The OS wrapper. Its __setitem__ is the expensive path we stopped using,
+    so it counts calls and shouts if the fast path regresses onto it."""
+
+    def __init__(self, strip):
+        self.strings = [strip]
+        self.setitems = 0
+        self.writes = 0
+
+    def __setitem__(self, i, v):
+        self.setitems += 1
+
+    def write(self):
+        self.writes += 1
+
+
+class TestHardwareWrite(unittest.TestCase):
+    """The badge measured 6 Hz with the collector running flat out. Per LED per
+    frame we allocated a 3-tuple, and ComposedNeoPixel.__setitem__ then built a
+    list, a zip and a sorted() of its own. The native driver's buffer is what
+    the OS's own boot animation ends up in, and it is what we blit into now."""
+
+    def bind(self, engine, composed):
+        engine._bound = True
+        engine._leds = composed
+        strip = composed.strings[0]
+        engine._strip = strip
+        engine._buf_out = strip.buf
+        engine._order = strip.ORDER[:3]
+        engine._bpp = strip.bpp
+        return strip
+
+    def test_the_fast_path_never_touches_the_wrapper(self):
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        composed = FakeComposed(FakeStrip())
+        strip = self.bind(engine, composed)
+        engine.set_state(0, "error", 0, T0)
+        engine.render(T0)
+        self.assertEqual(composed.setitems, 0, "fell back to the slow path")
+        self.assertGreater(strip.writes, 0)
+
+    def test_colours_land_in_the_driver_byte_order(self):
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        composed = FakeComposed(FakeStrip())
+        strip = self.bind(engine, composed)
+        engine.set_raw({"segment": "edge:0", "effect": "solid",
+                        "rgb": (10, 20, 30), "speed": 128, "intensity": 128,
+                        "brightness": 255, "ttl": 60}, T0)
+        engine.render(T0)
+        offset = PROFILE.led_offset
+        first = PROFILE.edge_leds[0][0] + offset
+        r, g, b = strip.ORDER[0], strip.ORDER[1], strip.ORDER[2]
+        base = first * strip.bpp
+        # GRB on the wire, RGB in our frame: the ORDER table is what maps them,
+        # and getting it wrong swaps red and green everywhere.
+        self.assertEqual(strip.buf[base + r], 10)
+        self.assertEqual(strip.buf[base + g], 20)
+        self.assertEqual(strip.buf[base + b], 30)
+
+    def test_it_falls_back_rather_than_going_dark(self):
+        # A wrapper that hides its buffer, or a firmware that changes shape.
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        composed = FakeComposed(FakeStrip())
+        engine._bound = True
+        engine._leds = composed
+        engine._buf_out = None
+        engine.set_state(0, "error", 0, T0)
+        engine.render(T0)
+        self.assertGreater(composed.setitems, 0)
+        self.assertGreater(composed.writes, 0)
+
+    def test_an_unchanged_frame_is_not_written_at_all(self):
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        composed = FakeComposed(FakeStrip())
+        strip = self.bind(engine, composed)
+        engine.set_state(0, "done", 0, T0)      # solid: no animation
+        engine.render(T0)
+        before = strip.writes
+        engine.render(T0 + 50)
+        self.assertEqual(strip.writes, before, "wrote an identical frame")

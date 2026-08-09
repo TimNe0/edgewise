@@ -17,7 +17,9 @@ import app
 from app_components import Notification, clear_background
 from events.input import BUTTON_TYPES, Buttons
 from system.eventbus import eventbus
-from system.patterndisplay.events import PatternDisable, PatternEnable
+from system.patterndisplay.events import (
+    PatternDisable, PatternEnable, PatternReload, PatternSet,
+)
 
 from . import boards, clock, conf as C, demo as demo_mod, gestures as gest
 from . import prefs, timesync as timesync_mod
@@ -25,7 +27,22 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.8.1"
+def _off_pattern():
+    """The firmware's own do-nothing pattern, if this build has one.
+
+    Feature-detected: a firmware without it simply keeps the old behaviour of
+    disabling the pattern and leaving its task spinning, which is what shipped
+    until now and is merely slow rather than broken.
+    """
+    try:
+        from patterns.off import OffPattern
+
+        return OffPattern
+    except ImportError:  # pragma: no cover - not every firmware has it
+        return None
+
+
+VERSION = "0.9.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -45,8 +62,10 @@ STARTUP_GRACE_MS = 400
 LED_INTERVAL_MS = 50
 SCREEN_INTERVAL_MS = 200
 IDLE_REDRAW_MS = 1000
-# The OS pattern generator has to be told repeatedly to keep off the ring.
-PATTERN_SUPPRESS_MS = 10000
+# How long the board stays empty before the ring goes back to the OS. Taking it
+# back is immediate; giving it away waits, so a slot that expires and returns
+# does not hand the ring to and fro.
+RING_RELEASE_MS = 3000
 
 # How often the badge reports its own loop timing. Buttons are polled once per
 # iteration, so the loop rate *is* the input latency: at 5 Hz a press has to be
@@ -138,7 +157,7 @@ class EdgewiseApp(app.App):
         self._uptime_ms = 0
         self._last_tick_ms = time.ticks_ms()
         self._led_timer = 0
-        self._pattern_timer = 0
+        self._ring_idle_ms = 0
         self._leds_owned = False
 
         self._dirty = True
@@ -149,6 +168,8 @@ class EdgewiseApp(app.App):
         self._renders = 0
         self._hhmm_cache = None
         self._hhmm_at_ms = -99999
+        self._night_cache = 255
+        self._night_at_ms = 0
         # Bumped whenever the weather changes, so the redraw check can compare
         # an int instead of sorting a dict every iteration.
         self._weather_gen = 0
@@ -296,24 +317,6 @@ class EdgewiseApp(app.App):
 
     # -- lifecycle -----------------------------------------------------------
 
-    def background_update(self, delta):
-        """Runs even when the app is not on screen.
-
-        The only place that notices focus being taken away by something other
-        than our own CANCEL handler. Without it the ring keeps whatever the last
-        frame left on it, with the OS pattern still suppressed, and the LEDs
-        look stuck on.
-        """
-        wanted = getattr(self, "_foreground", True)
-        if wanted == self._leds_owned:
-            return
-        self._leds_owned = wanted
-        if wanted:
-            eventbus.emit(PatternDisable())
-        else:
-            self.engine.all_off()
-            eventbus.emit(PatternEnable())
-
     async def run(self, render_update):
         while True:
             now = time.ticks_ms()
@@ -442,8 +445,6 @@ class EdgewiseApp(app.App):
 
         self._sync_layout(now)
         phase("layout")
-        self._drive_leds(delta, now)
-        phase("leds")
 
     def _sync_layout(self, now):
         names = self.board.names()
@@ -453,10 +454,38 @@ class EdgewiseApp(app.App):
 
     # -- LEDs ----------------------------------------------------------------
 
-    def _drive_leds(self, delta, now):
-        if not self._leds_owned and getattr(self, "_foreground", True):
-            self._leds_owned = True
-            eventbus.emit(PatternDisable())
+    def background_update(self, delta):
+        """Drive the ring, off the foreground loop.
+
+        The firmware runs this from `background_task()` for every app, at 20 Hz,
+        and it is where the OS itself drives the ring. Doing it inline in the
+        foreground loop -- as this did until now -- made every millisecond of
+        LED work a millisecond of button latency, and the badge measured 8 loops
+        a second with LEDs taking 43% of the time.
+        """
+        now = clock.now_ms()
+        if not getattr(self, "_foreground", True):
+            # Focus taken by something else -- give the ring back immediately,
+            # not after the idle delay. This is also the only place that notices
+            # focus being lost by any route other than our own CANCEL handler.
+            if self._leds_owned:
+                self._release_ring()
+            return
+
+        wanted = ledfx.ring_wanted(
+            True,
+            self.screen == SCREEN_CALIBRATE,
+            bool(self.board.slots),
+            self.cfg["idle_pattern"])
+
+        if wanted:
+            self._ring_idle_ms = 0
+            if not self._leds_owned:
+                self._take_ring()
+        else:
+            self._ring_idle_ms += delta
+            if self._leds_owned and self._ring_idle_ms >= RING_RELEASE_MS:
+                self._release_ring()
         if not self._leds_owned:
             return
 
@@ -464,27 +493,36 @@ class EdgewiseApp(app.App):
         if self._led_timer < LED_INTERVAL_MS:
             return
         self._led_timer = 0
+        self._drive_leds(delta, now)
 
-        # The OS pattern generator keeps trying to reclaim the ring. Every
-        # emit goes through the eventbus to an async handler, which costs a
-        # task, so this is a reminder rather than a heartbeat -- ten seconds of
-        # someone else's pattern has never actually been observed.
-        self._pattern_timer += LED_INTERVAL_MS
-        if self._pattern_timer >= PATTERN_SUPPRESS_MS:
-            self._pattern_timer = 0
-            eventbus.emit(PatternDisable())
+    def _take_ring(self):
+        """Take the ring, and stop the OS animating one we now own.
 
+        PatternDisable alone only stops it *painting*: its task keeps running at
+        the pattern's own fps -- 30 for the default rainbow -- calling
+        settings.get() and computing a frame every time, on the same scheduler
+        as this app. Swapping in the `off` pattern drops that to once a second.
+        """
+        self._leds_owned = True
+        eventbus.emit(PatternDisable())
+        pattern = _off_pattern()
+        if pattern is not None:
+            eventbus.emit(PatternSet(pattern))
+
+    def _release_ring(self):
+        """Hand the ring back, with whatever pattern the user had chosen."""
+        self._leds_owned = False
+        self.engine.all_off()
+        eventbus.emit(PatternReload())
+        eventbus.emit(PatternEnable())
+
+    def _drive_leds(self, delta, now):
         if self.screen == SCREEN_CALIBRATE:
             self._calibration_frame(now)
             return
 
         self.engine.night_level = (self.cfg["night"]["level"] * 255 // 100
-                                   if self.snoozed else self._night_level())
-        # Ambient colour only when there is genuinely nothing to report, and
-        # never while snoozed: face-down means "settle down", and a ring quietly
-        # cycling colours at you is not that.
-        self.engine.idle = (self.cfg["idle_pattern"] and not self.snoozed
-                            and not self.board.slots)
+                                   if self.snoozed else self._night_level(now))
         for edge in range(layout_mod.EDGES):
             name = self.layout.slot_at(edge)
             slot = self.board.slots.get(name) if name else None
@@ -495,7 +533,17 @@ class EdgewiseApp(app.App):
                                       slot.is_stale(now))
         self.engine.render(now)
 
-    def _night_level(self):
+    def _night_level(self, now_ms=0):
+        # Cached: this reads the RTC twice and parses two "HH:MM" strings, and
+        # it ran on every LED frame. Night mode changes on a schedule measured
+        # in hours; a minute of lag is invisible.
+        if self._night_at_ms and clock.elapsed_ms(self._night_at_ms, now_ms) < 60000:
+            return self._night_cache
+        self._night_at_ms = now_ms or 1
+        self._night_cache = self._night_level_now()
+        return self._night_cache
+
+    def _night_level_now(self):
         night = self.cfg["night"]
         if not night["enabled"] or not C.clock_is_set():
             return 255
@@ -1102,9 +1150,7 @@ class EdgewiseApp(app.App):
     # -- shutdown ------------------------------------------------------------
 
     def _shutdown(self):
-        self._leds_owned = False
-        self.engine.all_off()
-        eventbus.emit(PatternEnable())
+        self._release_ring()
         self.button_states.clear()
         self.minimise()
 

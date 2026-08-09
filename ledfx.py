@@ -325,17 +325,25 @@ class Layer:
         return self.expires_ms is None or not clock.expired(self.expires_ms, now_ms)
 
 
-# The idle pattern: what the ring does when there is nothing to say.
-#
-# Ninety seconds for a full rotation, which is slow enough to read as "alive"
-# rather than "animating", and roughly 0.011 Hz -- three hundred times under the
-# strobe cap, without needing to be special-cased around it.
-#
-# The level is deliberately low and is applied *before* the global brightness
-# ceiling and night mode, so an ambient ring is always dimmer than a real status
-# and never the brightest thing on the desk.
-IDLE_PERIOD_MS = 90000
-IDLE_LEVEL = 46
+def ring_wanted(foreground, calibrating, has_slots, idle_pattern):
+    """Whether Edgewise should own the LED ring right now.
+
+    The badge's own pattern generator animates this ring smoothly at 30 fps for
+    nothing, and it is what you see on boot. Holding the ring while we have
+    nothing to show meant animating it ourselves *and* leaving the OS task
+    spinning at 30 fps computing frames we discarded -- two systems doing one
+    job, which is what made the result stutter.
+
+    So: take the ring when there is something to say, and give it back when
+    there is not. `idle_pattern` off means the user wants a dark ring rather
+    than the badge's own colours, and a dark ring is something only we can
+    provide -- the OS pattern would light it.
+    """
+    if not foreground:
+        return False
+    if calibrating or has_slots:
+        return True
+    return not idle_pattern
 
 
 class LedEngine:
@@ -362,11 +370,6 @@ class LedEngine:
         self._edge_ceiling = bytearray(len(profile.edge_leds))
         self.brightness = 180
         self.night_level = 255
-        # Set by the app each frame: on only when the board is genuinely empty.
-        # A lit edge always means a job, so ambient colour never shares the ring
-        # with a status -- otherwise "is that edge telling me something?" stops
-        # having an answer.
-        self.idle = False
         # Hardware binding, resolved on first write and then never again.
         self._bound = False
         self._leds = None
@@ -461,9 +464,6 @@ class LedEngine:
                 if level < 255:
                     self._dim_segment(buf, seg, level)
 
-        if self.idle and not self._anything_lit(now_ms):
-            self._draw_idle(buf, now_ms)
-
         if self._ring_raw is not None:
             layer, seg = self._ring_raw
             if layer.alive(now_ms):
@@ -483,38 +483,6 @@ class LedEngine:
         if _TICKS_US:
             self.us_write += _TICKS_US() - mid
         return True
-
-    def _anything_lit(self, now_ms):
-        for edge in range(len(self._semantic)):
-            if self._semantic[edge] is not None:
-                return True
-            layer = self._raw[edge]
-            if layer is not None and layer.alive(now_ms):
-                return True
-        return self._ring_raw is not None
-
-    def _draw_idle(self, buf, now_ms):
-        """A slow hue drift around the whole ring, one LED after the next.
-
-        Writes straight into the frame buffer with integer maths and no
-        allocation, like every other effect here: twenty times a second, tuples
-        add up until the collector shows in the frame time.
-        """
-        n = len(buf) // 3
-        if not n:
-            return
-        offset = ((now_ms % IDLE_PERIOD_MS) * _WHEEL_N) // IDLE_PERIOD_MS
-        for i in range(n):
-            # Minus, not plus. With `offset + i` a fixed colour sits at a lower
-            # index as time passes, so the wave travels *down* the ring --
-            # anticlockwise on the badge, against the direction the edges are
-            # numbered. fx_rainbow has the same quirk; it is left alone because
-            # its direction is a publisher's choice, and this one is ours.
-            w = ((offset - (i * _WHEEL_N) // n) % _WHEEL_N) * 3
-            _set(buf, i,
-                 _scale(_WHEEL[w], IDLE_LEVEL),
-                 _scale(_WHEEL[w + 1], IDLE_LEVEL),
-                 _scale(_WHEEL[w + 2], IDLE_LEVEL))
 
     def _dim_segment(self, buf, seg, level):
         for i in seg:

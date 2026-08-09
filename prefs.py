@@ -80,7 +80,7 @@ GROUPS = (
         # Text, not number: the number dialog's alphabet is "0123456789." with
         # no minus sign, which would leave half the world unable to enter theirs.
         Item("utc_offset", "UTC offset", KIND_TEXT),
-        Item("idle_pattern", "Idle colours", KIND_TOGGLE),
+        Item("idle_pattern", "Idle colours", KIND_TOGGLE),   # badge pattern when free
     )),
     ("about", "About", (
         Item("replay_demo", "Replay demo", KIND_ACTION),

@@ -79,7 +79,9 @@ password is stored in plaintext, because the badge has no keystore — is
 | `info` | white, single pulse then dim | FYI |
 | `clear` | fades out over 2 s | slot removed |
 
-At rest the middle of the screen is a clock, so the badge earns its desk
+When nothing is happening the ring goes back to the badge's own pattern
+generator -- the colours you see on boot -- and Edgewise takes it over the
+moment a job needs an edge. At rest the middle of the screen is a clock, so the badge earns its desk
 space when nothing needs you. The moment something does, the count replaces
 it. The badge syncs the time over NTP itself -- Tildagon OS only does that
 during a firmware update -- and Settings shows nothing at all rather than a

@@ -79,6 +79,8 @@ DEFAULTS = {
     # no timezone database, so this is the whole of "what time is it here".
     # It does not follow daylight saving; nothing on the badge could.
     "utc_offset": 0,
+    # On: hand the ring back to the badge's own pattern generator when
+    # there is nothing to report. Off: hold the ring and keep it dark.
     "idle_pattern": True,
     # Cleared once the demo has played, so it only introduces itself once.
     "seen_demo": False,

@@ -294,90 +294,39 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestIdlePattern(unittest.TestCase):
-    """Ambient colour when the board is empty.
+class TestRingOwnership(unittest.TestCase):
+    """Who animates the ring when there is nothing to report.
 
-    The rule that keeps it honest: a lit edge always means a job. Ambient must
-    never share the ring with a status, or "is that edge telling me something?"
-    stops having an answer.
+    We used to: our own hue drift, while the OS pattern task went on computing
+    frames at 30 fps that nobody painted. Two systems animating one ring, which
+    is what made it stutter. Now the badge's own pattern gets the ring back, and
+    it is smooth for free because it is the thing that runs on boot.
     """
 
-    def engine(self):
-        eng = LedEngine(PROFILE, {"brightness": 255})
-        eng.idle = True
-        return eng
+    def test_a_slot_takes_the_ring(self):
+        self.assertTrue(ledfx.ring_wanted(True, False, True, True))
 
-    def test_an_empty_board_gets_colour(self):
-        eng = self.engine()
-        eng.render(1000)
-        self.assertNotEqual(max(eng.frame()), 0)
+    def test_an_empty_board_gives_it_back(self):
+        self.assertFalse(ledfx.ring_wanted(True, False, False, True))
 
-    def test_a_board_with_a_slot_does_not(self):
-        eng = self.engine()
-        eng.set_state(0, "working", 0, 1000)
-        eng.render(1000)
-        lit = eng.edge_colour(0)
-        for edge in range(1, 6):
-            self.assertEqual(eng.edge_colour(edge), (0, 0, 0),
-                             "ambient leaked onto edge %d" % edge)
-        self.assertNotEqual(lit, (0, 0, 0))
+    def test_calibrating_holds_it_even_with_no_slots(self):
+        # The calibrate screen is lighting LEDs to ask about them; handing the
+        # ring to the OS mid-question would answer it wrongly.
+        self.assertTrue(ledfx.ring_wanted(True, True, False, True))
 
-    def test_a_raw_override_also_suppresses_it(self):
-        eng = self.engine()
-        eng.set_raw({"segment": "edge:2", "effect": "solid", "rgb": (0, 255, 0),
-                     "speed": 128, "intensity": 128, "brightness": 255,
-                     "ttl": 60}, 1000)
-        eng.render(1000)
-        for edge in (0, 1, 3, 4, 5):
-            self.assertEqual(eng.edge_colour(edge), (0, 0, 0), edge)
+    def test_idle_colours_off_means_we_hold_a_dark_ring(self):
+        # A dark ring is something only we can provide: the OS pattern would
+        # light it. So "no idle colours" is a reason to keep the ring, not to
+        # release it.
+        self.assertTrue(ledfx.ring_wanted(True, False, False, False))
 
-    def test_it_is_off_when_the_flag_is_off(self):
-        eng = LedEngine(PROFILE, {"brightness": 255})
-        eng.idle = False
-        eng.render(1000)
-        self.assertEqual(max(eng.frame()), 0)
-
-    def test_it_moves_but_slowly(self):
-        # Alive, not animating: a full rotation takes a minute and a half, so
-        # neighbouring seconds look almost identical.
-        eng = self.engine()
-        eng.render(0)
-        first = bytes(eng.frame())
-        eng.render(ledfx.IDLE_PERIOD_MS // 3)
-        self.assertNotEqual(bytes(eng.frame()), first)
-
-    def test_it_is_dimmer_than_a_real_status(self):
-        eng = self.engine()
-        eng.render(1000)
-        ambient = max(eng.frame())
-        eng2 = LedEngine(PROFILE, {"brightness": 255})
-        eng2.set_state(0, "error", 0, 1000)
-        eng2.render(1000)
-        self.assertLess(ambient, max(eng2.frame()),
-                        "ambient must never be the brightest thing on the desk")
-
-    def test_it_travels_clockwise(self):
-        """Reported from a badge: "colour updates are running anticlockwise".
-
-        With `offset + i` a fixed hue sits at a *lower* index as time passes, so
-        the wave travels against the direction the edges are numbered. Follow
-        one colour round and require its index to climb.
-        """
-        eng = self.engine()
-
-        def reddest(t):
-            eng.render(t)
-            f = eng.frame()
-            n = len(f) // 3
-            return max(range(n), key=lambda i: f[i * 3] - f[i * 3 + 1] - f[i * 3 + 2])
-
-        seen = [reddest(t) for t in range(0, ledfx.IDLE_PERIOD_MS // 2, 7500)]
-        for previous, following in zip(seen, seen[1:]):
-            self.assertGreater(following, previous, seen)
-
-    def test_it_cannot_outrun_the_strobe_cap(self):
-        # Not a special case in the cap logic, so state the margin explicitly.
-        self.assertGreater(ledfx.IDLE_PERIOD_MS, ledfx.MIN_STROBE_PERIOD_MS * 100)
+    def test_the_background_never_holds_the_ring(self):
+        for calibrating in (False, True):
+            for slots in (False, True):
+                for idle in (False, True):
+                    self.assertFalse(
+                        ledfx.ring_wanted(False, calibrating, slots, idle),
+                        (calibrating, slots, idle))
 
 
 class FakeStrip:

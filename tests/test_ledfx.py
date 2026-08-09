@@ -292,3 +292,70 @@ class TestAllocation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIdlePattern(unittest.TestCase):
+    """Ambient colour when the board is empty.
+
+    The rule that keeps it honest: a lit edge always means a job. Ambient must
+    never share the ring with a status, or "is that edge telling me something?"
+    stops having an answer.
+    """
+
+    def engine(self):
+        eng = LedEngine(PROFILE, {"brightness": 255})
+        eng.idle = True
+        return eng
+
+    def test_an_empty_board_gets_colour(self):
+        eng = self.engine()
+        eng.render(1000)
+        self.assertNotEqual(max(eng.frame()), 0)
+
+    def test_a_board_with_a_slot_does_not(self):
+        eng = self.engine()
+        eng.set_state(0, "working", 0, 1000)
+        eng.render(1000)
+        lit = eng.edge_colour(0)
+        for edge in range(1, 6):
+            self.assertEqual(eng.edge_colour(edge), (0, 0, 0),
+                             "ambient leaked onto edge %d" % edge)
+        self.assertNotEqual(lit, (0, 0, 0))
+
+    def test_a_raw_override_also_suppresses_it(self):
+        eng = self.engine()
+        eng.set_raw({"segment": "edge:2", "effect": "solid", "rgb": (0, 255, 0),
+                     "speed": 128, "intensity": 128, "brightness": 255,
+                     "ttl": 60}, 1000)
+        eng.render(1000)
+        for edge in (0, 1, 3, 4, 5):
+            self.assertEqual(eng.edge_colour(edge), (0, 0, 0), edge)
+
+    def test_it_is_off_when_the_flag_is_off(self):
+        eng = LedEngine(PROFILE, {"brightness": 255})
+        eng.idle = False
+        eng.render(1000)
+        self.assertEqual(max(eng.frame()), 0)
+
+    def test_it_moves_but_slowly(self):
+        # Alive, not animating: a full rotation takes a minute and a half, so
+        # neighbouring seconds look almost identical.
+        eng = self.engine()
+        eng.render(0)
+        first = bytes(eng.frame())
+        eng.render(ledfx.IDLE_PERIOD_MS // 3)
+        self.assertNotEqual(bytes(eng.frame()), first)
+
+    def test_it_is_dimmer_than_a_real_status(self):
+        eng = self.engine()
+        eng.render(1000)
+        ambient = max(eng.frame())
+        eng2 = LedEngine(PROFILE, {"brightness": 255})
+        eng2.set_state(0, "error", 0, 1000)
+        eng2.render(1000)
+        self.assertLess(ambient, max(eng2.frame()),
+                        "ambient must never be the brightest thing on the desk")
+
+    def test_it_cannot_outrun_the_strobe_cap(self):
+        # Not a special case in the cap logic, so state the margin explicitly.
+        self.assertGreater(ledfx.IDLE_PERIOD_MS, ledfx.MIN_STROBE_PERIOD_MS * 100)

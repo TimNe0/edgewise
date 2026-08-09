@@ -77,11 +77,11 @@ class Dashboard:
     """The default screen: six arcs, labels, and a count in the middle."""
 
     def draw(self, r, board, layout, engine, now_ms, link_state="", cfg=None,
-             hhmm=None, weather=None, selected=None):
+             hhmm=None, weather=None, selected=None, snoozed=False):
         r.clear(BG)
         self._arcs(r, layout, engine, now_ms, selected)
         self._labels(r, board, layout, now_ms, selected)
-        self._centre(r, board, now_ms, hhmm, weather)
+        self._centre(r, board, now_ms, hhmm, weather, snoozed)
         self._footer(r, link_state, cfg)
 
     def _arcs(self, r, layout, engine, now_ms, selected=None):
@@ -117,8 +117,21 @@ class Dashboard:
                 age += " ?"
             r.text(age, x, y + 8, DIM, size=12, align="center")
 
-    def _centre(self, r, board, now_ms, hhmm=None, weather=None):
+    def _centre(self, r, board, now_ms, hhmm=None, weather=None,
+                snoozed=False):
         needs, total = board.counts()
+        if snoozed:
+            # Face-down dims the ring, and on an empty or quiet board that is
+            # indistinguishable from the app having died. Say it plainly, and
+            # say what is still waiting -- snooze hides nothing.
+            r.text("snoozed", 0, -10, DIM, size=17, align="center")
+            if needs:
+                r.text("%d still waiting" % needs, 0, 14, WARN,
+                       size=12, align="center")
+            else:
+                r.text("turn me over", 0, 14, (0.3, 0.3, 0.34),
+                       size=10, align="center")
+            return
         if needs:
             # The clock gets out of the way entirely. Something needs you, and
             # that is the only thing this screen is for at that moment.

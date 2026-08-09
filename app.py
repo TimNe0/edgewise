@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -424,6 +424,11 @@ class EdgewiseApp(app.App):
 
         self.engine.night_level = (self.cfg["night"]["level"] * 255 // 100
                                    if self.snoozed else self._night_level())
+        # Ambient colour only when there is genuinely nothing to report, and
+        # never while snoozed: face-down means "settle down", and a ring quietly
+        # cycling colours at you is not that.
+        self.engine.idle = (self.cfg["idle_pattern"] and not self.snoozed
+                            and not self.board.slots)
         for edge in range(layout_mod.EDGES):
             name = self.layout.slot_at(edge)
             slot = self.board.slots.get(name) if name else None
@@ -481,7 +486,7 @@ class EdgewiseApp(app.App):
             # Moving the cursor changes nothing else in this tuple, so without
             # these the settings list would not repaint until something
             # unrelated happened to it.
-            self.prefs.group, self.prefs.index,
+            self.prefs.group, self.prefs.index, self.snoozed,
             self._hhmm(), self.weather and tuple(sorted(
                 (k, v) for k, v in self.weather.items())),
         )
@@ -523,7 +528,7 @@ class EdgewiseApp(app.App):
             self.dashboard.draw(r, self.board, self.layout, self.engine, now,
                                 views.link_summary(self.link_state, self.cfg),
                                 self.cfg, self._hhmm(), self.weather,
-                                self.selected_edge)
+                                self.selected_edge, self.snoozed)
             if self.screen == SCREEN_DEMO and self.demo.caption:
                 self._demo_caption(r)
             elif self.message is not None:
@@ -592,6 +597,14 @@ class EdgewiseApp(app.App):
                     return
             return
         if self.screen == SCREEN_DETAIL:
+            # A slot can vanish while you are reading it -- acknowledged, TTL
+            # expired, or retained-cleared by its publisher. Showing "gone" and
+            # staying there is a dead end that reads as a hang; the board is
+            # what you want at that point, and it is one press away anyway.
+            if self.board.slots.get(self._detail_name) is None:
+                self.screen = SCREEN_DASH
+                self._dirty = True
+                return
             if self._pressed("CANCEL") or self._pressed("LEFT"):
                 self.screen = SCREEN_DASH
                 self._dirty = True

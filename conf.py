@@ -79,6 +79,7 @@ DEFAULTS = {
     # no timezone database, so this is the whole of "what time is it here".
     # It does not follow daylight saving; nothing on the badge could.
     "utc_offset": 0,
+    "idle_pattern": True,
     # Cleared once the demo has played, so it only introduces itself once.
     "seen_demo": False,
 }
@@ -222,6 +223,7 @@ def validate(cfg):
 
     out["utc_offset"] = int(_clamp_number(
         out.get("utc_offset"), UTC_OFFSET_MIN, UTC_OFFSET_MAX, 0))
+    out["idle_pattern"] = bool(out.get("idle_pattern"))
     out["palette"] = _clamp_choice(out.get("palette"), PALETTES, "default")
     out["max_slots"] = int(_clamp_number(
         out.get("max_slots"), MAX_SLOTS_MIN, MAX_SLOTS_MAX, DEFAULTS["max_slots"]))

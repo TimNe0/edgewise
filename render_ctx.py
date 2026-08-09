@@ -62,8 +62,10 @@ class CtxRenderer:
         """A stroked arc. Angles in degrees, 0 at twelve o'clock, clockwise.
 
         Screen space has y growing downwards and ctx measures from three
-        o'clock, so the -90 rotation here is what makes "edge 0 is the top"
-        true on the display as well as in the model.
+        o'clock, so the -90 rotation here is what puts 0 at the top of the
+        display. Where an *edge* sits is a separate question and not this
+        function's business: the badge is a hexagon on its point, so twelve
+        o'clock is a corner. `views.edge_centre_deg` owns that offset.
         """
         ctx = self.ctx
         ctx.line_width = w

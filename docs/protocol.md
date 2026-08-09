@@ -145,8 +145,14 @@ see [security.md](security.md)).
 | `tap` | you opened the detail view |
 | `snooze` / `wake` | badge turned face-down / picked back up. `slot` and `edge` are `null` |
 
-`slot` and `edge` are `null` for board-wide events. `ts` is the badge's wall
-clock in seconds, which is only meaningful once it has reached an NTP server.
+`slot` and `edge` are `null` for board-wide events.
+
+**`ts` is `0` when the badge does not know the date.** It has no
+battery-backed clock, so until it has reached an NTP server there is no real
+time to report — and `0` says so, where a raw `time.time()` would report
+something like `627` and look like a valid timestamp from 1970. Treat `0` as
+"unknown", not as an ordering. Everything else about the event is still true:
+the tap happened, and it happened just now.
 
 **Events carry no content.** No labels, no messages, no project names — only
 what happened and where. The event topic is the one thing a subscriber has not

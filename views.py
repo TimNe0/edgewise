@@ -25,11 +25,30 @@ ARC_WIDTH = 11
 # A gap between arcs so six of them read as six things, not a ring.
 ARC_GAP_DEG = 7.0
 
+# The badge is a hexagon standing on a point, so twelve o'clock is a *corner*,
+# not an edge. Edge centres sit half a span round from there: 30, 90, 150...
+#
+# Without this the arcs are drawn half an edge anticlockwise of the LEDs they
+# are supposed to be describing -- the screen says top, the ring lights one
+# o'clock -- which is the one failure this module exists to prevent. It is also
+# not fixable from settings: `rotation` moves in whole 60-degree edges and can
+# never express 30.
+EDGE_CENTRE_OFFSET_DEG = 30.0
+
+
+def edge_centre_deg(edge):
+    """Clockwise degrees from twelve o'clock to the middle of an edge."""
+    return edge * (360.0 / EDGES) + EDGE_CENTRE_OFFSET_DEG
+
 
 def edge_arc(edge):
-    """(start, end) degrees for an edge's rim segment. 0 is the top."""
+    """(start, end) degrees for an edge's rim segment.
+
+    Edge 0 is the first edge clockwise of the top corner -- roughly one to two
+    o'clock -- which is where the LED map starts on both board profiles.
+    """
     span = 360.0 / EDGES
-    centre = edge * span
+    centre = edge_centre_deg(edge)
     half = (span - ARC_GAP_DEG) / 2.0
     return centre - half, centre + half
 
@@ -38,7 +57,7 @@ def edge_anchor(edge, radius):
     """Where a label for this edge sits, in screen coordinates."""
     import math
 
-    angle = (edge * (360.0 / EDGES) - 90.0) * (math.pi / 180.0)
+    angle = (edge_centre_deg(edge) - 90.0) * (math.pi / 180.0)
     return math.cos(angle) * radius, math.sin(angle) * radius
 
 

@@ -73,3 +73,31 @@ def elapsed_ms(since, now):
 def expired(deadline, now):
     """True once `now` has reached `deadline`. Wrap-safe."""
     return diff_ms(now, deadline) >= 0
+
+
+# The badge has no battery-backed RTC. Until it reaches an NTP server its clock
+# reads some time in 1970, and `int(time.time())` returns a number like 627 --
+# which is not obviously wrong to anything downstream. The first ack ever
+# published from real hardware carried exactly that.
+#
+# Zero is returned instead, because no real event happens at the epoch: a
+# subscriber can test for it, where it cannot test for "suspiciously small".
+# This matters beyond tidiness. Signed mode (M6) rejects stale messages using a
+# 60-second window on `ts`, and a badge whose clock says 1970 would have every
+# message it signs rejected forever, for a reason nobody would find quickly.
+CLOCK_SET_YEAR = 2024
+
+
+def wall_seconds(time_mod=None):
+    """Unix seconds, or 0 when the badge does not know the date."""
+    if time_mod is None:
+        try:
+            import time as time_mod
+        except ImportError:  # pragma: no cover - there is always time
+            return 0
+    try:
+        if time_mod.localtime()[0] < CLOCK_SET_YEAR:
+            return 0
+        return int(time_mod.time())
+    except Exception:  # noqa: BLE001 - no RTC at all
+        return 0

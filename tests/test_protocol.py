@@ -8,7 +8,7 @@ from a worker thread on this firmware is a hardware question -- see
 
 import unittest
 
-from edgewise import conf, mqtt_link
+from edgewise import clock, conf, mqtt_link
 from edgewise.mqtt_link import BrokerSpec, Link, route, topic_suffix
 from tests.fakes import FakeBroker, FakeMQTTClient, factory
 
@@ -357,3 +357,42 @@ class TestRetainedRebuild(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWallClock(unittest.TestCase):
+    """Found on hardware: the first ack the badge ever published carried
+    `"ts":627` -- `int(time.time())` on a badge that had never reached an NTP
+    server. It looks like a real timestamp and is not one."""
+
+    class FakeTime:
+        def __init__(self, year, epoch):
+            self._year = year
+            self._epoch = epoch
+
+        def localtime(self):
+            return (self._year, 1, 1, 0, 0, 0, 0, 0)
+
+        def time(self):
+            return self._epoch
+
+    def test_an_unset_clock_reports_zero_not_1970(self):
+        fake = self.FakeTime(1970, 627)
+        self.assertEqual(clock.wall_seconds(fake), 0)
+
+    def test_a_set_clock_reports_the_real_time(self):
+        fake = self.FakeTime(2026, 1786261821)
+        self.assertEqual(clock.wall_seconds(fake), 1786261821)
+
+    def test_the_boundary_year_counts_as_set(self):
+        fake = self.FakeTime(clock.CLOCK_SET_YEAR, 1700000000)
+        self.assertEqual(clock.wall_seconds(fake), 1700000000)
+
+    def test_a_badge_with_no_rtc_at_all_does_not_raise(self):
+        class NoClock:
+            def localtime(self):
+                raise OSError("no RTC")
+
+            def time(self):
+                raise OSError("no RTC")
+
+        self.assertEqual(clock.wall_seconds(NoClock()), 0)

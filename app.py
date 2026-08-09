@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -751,10 +751,9 @@ class EdgewiseApp(app.App):
         self.link.publish_event(payload.encode())
 
     def _wall_clock(self):
-        try:
-            return int(time.time())
-        except Exception:  # noqa: BLE001
-            return 0
+        # 0 when the badge has never reached NTP, rather than a 1970 timestamp
+        # that looks real. See clock.wall_seconds.
+        return clock.wall_seconds()
 
     def _move_selection(self, direction):
         """Move the highlight, landing only on edges that have a slot."""

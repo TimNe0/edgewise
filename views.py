@@ -76,11 +76,12 @@ def short_age(ms):
 class Dashboard:
     """The default screen: six arcs, labels, and a count in the middle."""
 
-    def draw(self, r, board, layout, engine, now_ms, link_state="", cfg=None):
+    def draw(self, r, board, layout, engine, now_ms, link_state="", cfg=None,
+             hhmm=None):
         r.clear(BG)
         self._arcs(r, layout, engine, now_ms)
         self._labels(r, board, layout, now_ms)
-        self._centre(r, board, now_ms)
+        self._centre(r, board, now_ms, hhmm)
         self._footer(r, link_state, cfg)
 
     def _arcs(self, r, layout, engine, now_ms):
@@ -110,12 +111,22 @@ class Dashboard:
                 age += " ?"
             r.text(age, x, y + 8, DIM, size=12, align="center")
 
-    def _centre(self, r, board, now_ms):
+    def _centre(self, r, board, now_ms, hhmm=None):
         needs, total = board.counts()
         if needs:
+            # The clock gets out of the way entirely. Something needs you, and
+            # that is the only thing this screen is for at that moment.
             r.text(str(needs), 0, -8, ACCENT, size=42, align="center")
             r.text("need you" if needs > 1 else "needs you",
                    0, 20, ACCENT, size=13, align="center")
+            return
+
+        if hhmm:
+            # Big, because at rest this is a desk clock and it is being read
+            # from across a room rather than at arm's length.
+            r.text(hhmm, 0, -6, FG, size=38, align="center")
+            r.text("all clear" if total else "no jobs", 0, 24, DIM,
+                   size=11, align="center")
         elif total:
             # Deliberately calm. A board that shouts when nothing is wrong
             # teaches people to ignore it.

@@ -17,7 +17,7 @@ a 240-pixel round display, and a deeper tree means more presses to reach the
 one thing anybody changes twice: the broker host.
 """
 
-from . import boards, conf, security
+from . import boards, clock, conf, security
 
 # What selecting an item does. The app maps these to platform dialogs; nothing
 # in this module knows a dialog exists.
@@ -77,6 +77,9 @@ GROUPS = (
         Item("night.to", "Night to", KIND_TEXT),
         Item("night.level", "Night level", KIND_NUMBER,
              low=conf.NIGHT_LEVEL_MIN, high=conf.NIGHT_LEVEL_MAX),
+        # Text, not number: the number dialog's alphabet is "0123456789." with
+        # no minus sign, which would leave half the world unable to enter theirs.
+        Item("utc_offset", "UTC offset", KIND_TEXT),
     )),
     ("about", "About", (
         Item("replay_demo", "Replay demo", KIND_ACTION),
@@ -232,6 +235,10 @@ class SettingsModel:
         """
         if item is None or text is None or text is False:
             return False
+        if item.key == "utc_offset":
+            self.cfg = put(self.cfg, item.key,
+                           clock.parse_utc_offset(text, get(self.cfg, item.key)))
+            return True
         if item.kind == KIND_NUMBER:
             try:
                 value = int(str(text).strip() or "0")
@@ -262,6 +269,8 @@ class SettingsModel:
             # holding at arm's length. docs/security.md is honest that this is
             # shoulder-surfing cover and not encryption.
             return "•" * min(len(value or ""), 6) if value else "not set"
+        if item.key == "utc_offset":
+            return clock.format_utc_offset(value)
         if item.key == "rotation":
             return ROTATION_LABELS[value % len(ROTATION_LABELS)]
         if item.key == "board":

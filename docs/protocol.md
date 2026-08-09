@@ -148,8 +148,9 @@ see [security.md](security.md)).
 `slot` and `edge` are `null` for board-wide events.
 
 **`ts` is `0` when the badge does not know the date.** It has no
-battery-backed clock, so until it has reached an NTP server there is no real
-time to report — and `0` says so, where a raw `time.time()` would report
+battery-backed clock. It syncs over NTP shortly after Wi-Fi comes up and
+hourly after that, but until that first sync lands there is no real time to
+report — and `0` says so, where a raw `time.time()` would report
 something like `627` and look like a valid timestamp from 1970. Treat `0` as
 "unknown", not as an ordering. Everything else about the event is still true:
 the tap happened, and it happened just now.

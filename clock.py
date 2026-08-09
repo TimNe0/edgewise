@@ -101,3 +101,48 @@ def wall_seconds(time_mod=None):
         return int(time_mod.time())
     except Exception:  # noqa: BLE001 - no RTC at all
         return 0
+
+
+def local_hhmm(offset_minutes=0, time_mod=None):
+    """"HH:MM" in local time, or None when the badge does not know the date.
+
+    None rather than "00:00": a stopped clock that shows a plausible time is
+    worse than one that shows nothing, because only the second is obviously
+    not to be trusted.
+    """
+    seconds = wall_seconds(time_mod)
+    if not seconds:
+        return None
+    total = (seconds + offset_minutes * 60) % 86400
+    return "%02d:%02d" % (total // 3600, (total % 3600) // 60)
+
+
+def parse_utc_offset(text, default=0):
+    """"+1", "-5", "5:30", "-3:30" -> minutes. Anything else is the default.
+
+    Typed rather than picked from a list because the number dialog's alphabet is
+    "0123456789." with no minus sign, so half the world could not enter theirs.
+    """
+    if text is None:
+        return default
+    text = str(text).strip().replace(" ", "")
+    if not text:
+        return default
+    sign = 1
+    if text[0] in "+-":
+        sign = -1 if text[0] == "-" else 1
+        text = text[1:]
+    hours, _, minutes = text.partition(":")
+    try:
+        total = int(hours or 0) * 60 + int(minutes or 0)
+    except ValueError:
+        return default
+    total *= sign
+    # Real zones run from -12:00 to +14:00.
+    return total if -720 <= total <= 840 else default
+
+
+def format_utc_offset(minutes):
+    sign = "-" if minutes < 0 else "+"
+    minutes = abs(int(minutes))
+    return "%s%d:%02d" % (sign, minutes // 60, minutes % 60)

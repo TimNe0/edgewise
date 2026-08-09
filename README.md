@@ -79,6 +79,12 @@ password is stored in plaintext, because the badge has no keystore — is
 | `info` | white, single pulse then dim | FYI |
 | `clear` | fades out over 2 s | slot removed |
 
+At rest the middle of the screen is a clock, so the badge earns its desk
+space when nothing needs you. The moment something does, the count replaces
+it. The badge syncs the time over NTP itself -- Tildagon OS only does that
+during a firmware update -- and Settings shows nothing at all rather than a
+wrong time if the sync has not landed. Set your UTC offset under Display.
+
 Up to 12 jobs are tracked and the six most urgent are shown. Active slots take
 the most widely spaced edges available — two jobs go opposite each other, three
 alternate — and the layout re-balances as jobs come and go, stickily enough that

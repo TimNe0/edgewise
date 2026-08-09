@@ -45,6 +45,10 @@ BRIGHTNESS_MIN = 10
 BRIGHTNESS_MAX = 255
 NIGHT_LEVEL_MIN = 1
 NIGHT_LEVEL_MAX = 100
+# Real zones run from -12:00 to +14:00.
+UTC_OFFSET_MIN = -720
+UTC_OFFSET_MAX = 840
+
 MAX_SLOTS_MIN = 1
 MAX_SLOTS_MAX = 12
 
@@ -71,6 +75,10 @@ DEFAULTS = {
     "night": {"enabled": True, "from": "22:00", "to": "07:00", "level": 25},
     "palette": "default",
     "max_slots": 12,
+    # Minutes east of UTC. ntptime sets the clock to UTC and the badge has
+    # no timezone database, so this is the whole of "what time is it here".
+    # It does not follow daylight saving; nothing on the badge could.
+    "utc_offset": 0,
     # Cleared once the demo has played, so it only introduces itself once.
     "seen_demo": False,
 }
@@ -212,6 +220,8 @@ def validate(cfg):
         night.get("level"), NIGHT_LEVEL_MIN, NIGHT_LEVEL_MAX, DEFAULTS["night"]["level"]))
     out["night"] = night
 
+    out["utc_offset"] = int(_clamp_number(
+        out.get("utc_offset"), UTC_OFFSET_MIN, UTC_OFFSET_MAX, 0))
     out["palette"] = _clamp_choice(out.get("palette"), PALETTES, "default")
     out["max_slots"] = int(_clamp_number(
         out.get("max_slots"), MAX_SLOTS_MIN, MAX_SLOTS_MAX, DEFAULTS["max_slots"]))

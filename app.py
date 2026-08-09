@@ -20,12 +20,12 @@ from system.eventbus import eventbus
 from system.patterndisplay.events import PatternDisable, PatternEnable
 
 from . import boards, clock, conf as C, demo as demo_mod, gestures as gest
-from . import prefs
+from . import prefs, timesync as timesync_mod
 from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as touch_mod
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.2.1"
+VERSION = "0.3.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -75,6 +75,11 @@ class EdgewiseApp(app.App):
         # handled synchronously and a platform dialog has to be awaited, so the
         # two cannot meet directly.
         self._pending = None
+
+        # Nothing else in Tildagon OS sets the clock: the only ntptime call
+        # in the firmware is inside the OTA updater. Ask for it ourselves,
+        # on a thread, because settime() blocks on a UDP round trip.
+        self.timesync = timesync_mod.TimeSync()
 
         # Two hardware sources, one recogniser: pads on a 2026 badge, the
         # highlighted edge plus CONFIRM on a 2024 one. Both absent is fine --
@@ -133,6 +138,7 @@ class EdgewiseApp(app.App):
             self._start_demo()
 
         self._open_link()
+        self.timesync.start()
 
     # -- MQTT ----------------------------------------------------------------
 
@@ -341,6 +347,7 @@ class EdgewiseApp(app.App):
         self._uptime_ms += delta
         now = clock.now_ms()
 
+        self.timesync.pump(now)
         self._handle_buttons()
         self._handle_touch(now)
         self._handle_gestures(now)
@@ -490,7 +497,7 @@ class EdgewiseApp(app.App):
         else:
             self.dashboard.draw(r, self.board, self.layout, self.engine, now,
                                 views.link_summary(self.link_state, self.cfg),
-                                self.cfg)
+                                self.cfg, self._hhmm())
             if self.screen == SCREEN_DEMO and self.demo.caption:
                 self._demo_caption(r)
             elif self.message is not None:
@@ -502,6 +509,15 @@ class EdgewiseApp(app.App):
         # Last, and never conditionally: a platform dialog is an overlay, and
         # without this it opens, takes every button, and draws nothing at all.
         self.draw_overlays(ctx)
+
+    def _hhmm(self):
+        """Local time, or None until the badge has been told what it is.
+
+        None rather than a placeholder: a clock showing 00:00 on a desk is worse
+        than no clock, because only one of the two is obviously not to be
+        trusted.
+        """
+        return clock.local_hhmm(self.cfg["utc_offset"])
 
     def _demo_caption(self, r):
         r.text(self.demo.caption, 0, 62, views.FG, size=13, align="center")

@@ -76,6 +76,7 @@ replaced with `-`, because a slot name is one level of an MQTT topic.
 | `EDGEWISE_TTL` | default 3600. How long an edge survives without an update |
 | `EDGEWISE_EDGE` | `0`–`5`. Pins a slot to one edge instead of letting the layout move it |
 | `EDGEWISE_LABELS` | `name` (default) or `hash` — see Privacy below |
+| `EDGEWISE_MOSQUITTO` | full path to `mosquitto_pub`, if it is not on `PATH`. Searched automatically in Program Files, homebrew and /usr/local/bin — a hook fired by an editor does not inherit the PATH you set it up in |
 | `EDGEWISE_ENV` | path to the env file, if not `~/.config/edgewise/env` |
 | `EDGEWISE_PUB` | path to the publisher, for `run-and-report` and the other adapters |
 | `EDGEWISE_TEMP_UNIT` | `C` (default) or `F`, for `--weather` |

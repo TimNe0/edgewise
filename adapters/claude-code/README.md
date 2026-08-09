@@ -47,6 +47,24 @@ enough if you are writing something similar.
 **The hooks embed an absolute path to this checkout.** Move the repo and
 re-run the installer.
 
+**On Windows the installer writes the command differently**, and it has to.
+The editor runs hooks through `cmd`, which has no association for a `.sh` file:
+it exits 0, prints nothing, and does nothing — so the hook looks installed and
+fires into a void. The command therefore names an interpreter explicitly:
+
+```
+"C:/Program Files/Git/bin/bash.exe" "C:/path/to/edgewise-hook.sh" done
+```
+
+That needs Git for Windows. And because a hook does not inherit the `PATH` of
+the shell you installed it from, `edgewise-pub.sh` looks for `mosquitto_pub` in
+the usual places rather than trusting `PATH` — set `EDGEWISE_MOSQUITTO` if
+yours lives somewhere unusual.
+
+To check a hook really fires, run the command exactly as `settings.json` spells
+it, from a shell the editor would use — not from Git Bash, which is the one
+environment where both of these problems disappear.
+
 Nothing here needs sudo, and nothing downloads anything. If a future version of
 this script grows a `curl`, do not run it.
 

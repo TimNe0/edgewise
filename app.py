@@ -42,7 +42,7 @@ def _off_pattern():
         return None
 
 
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -439,6 +439,21 @@ class EdgewiseApp(app.App):
             self.message = None
             self._dirty = True
 
+        # The platform's Notification opens, waits three seconds and animates
+        # shut -- but only if something ticks it, and nothing ever did. Since
+        # _needs_draw() treats a live notification as "redraw now", the first
+        # "Acknowledged" of a session pinned the badge to a full screen render
+        # every iteration for the rest of it: renders_per_s came back equal to
+        # loops_per_s, at 5 Hz, on hardware.
+        #
+        # It is briefly "closed" before its open animation has run, so waiting
+        # on _is_closed() alone would drop it at birth.
+        if self.notification is not None:
+            self.notification.update(delta)
+            if not self.notification._open and self.notification._is_closed():
+                self.notification = None
+            self._dirty = True
+
         gone = self.board.expire(now)
         if gone:
             self._dirty = True
@@ -450,6 +465,13 @@ class EdgewiseApp(app.App):
         names = self.board.names()
         urgent = self.board.urgent_names()
         if self.layout.sync(names, self.board.pins(), now, urgent):
+            self._dirty = True
+        # Photographed on a badge: "no jobs" in the middle, and still a cursor
+        # ring and a "CONFIRM open - hold CANCEL drop" hint offering actions on
+        # a slot that had expired underneath them.
+        if (self.selected_edge is not None
+                and self.layout.slot_at(self.selected_edge) is None):
+            self.selected_edge = None
             self._dirty = True
 
     # -- LEDs ----------------------------------------------------------------

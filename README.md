@@ -8,9 +8,14 @@ can drive it, and the taps come back out as MQTT, so integrations are two-way.
 An app for the [EMF Tildagon](https://tildagon.badge.emfcamp.org/) badge (2024
 and 2026 boards), sitting on your desk on its USB-C lanyard.
 
-<!-- TODO(M4): photo of the badge on a desk showing three lit edges, and a GIF
-     of demo mode. The README is the store listing and the pitch; it needs both
-     before the repo goes public. -->
+![A Tildagon badge on a desk running Edgewise: the clock reads 16:15, with a
+weather icon, 19°C and a 25% chance of rain beneath it, and "no jobs" below
+that. The LED ring is running the badge's own colours because nothing needs
+attention.](docs/media/badge-on-a-desk.jpg)
+
+*Nothing to report: the clock, the weather, and the ring handed back to the
+badge's own pattern. When a job needs you, that ring is Edgewise's and one edge
+of it starts flashing.*
 
 ## Sixty seconds
 

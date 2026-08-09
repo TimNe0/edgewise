@@ -4,3 +4,6 @@ __pycache__/
 .venv/
 settings.json
 .mosquitto/
+
+# Camera originals. The web-sized copy lives in docs/media/.
+78637.jpg

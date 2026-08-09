@@ -356,6 +356,25 @@ class TestIdlePattern(unittest.TestCase):
         self.assertLess(ambient, max(eng2.frame()),
                         "ambient must never be the brightest thing on the desk")
 
+    def test_it_travels_clockwise(self):
+        """Reported from a badge: "colour updates are running anticlockwise".
+
+        With `offset + i` a fixed hue sits at a *lower* index as time passes, so
+        the wave travels against the direction the edges are numbered. Follow
+        one colour round and require its index to climb.
+        """
+        eng = self.engine()
+
+        def reddest(t):
+            eng.render(t)
+            f = eng.frame()
+            n = len(f) // 3
+            return max(range(n), key=lambda i: f[i * 3] - f[i * 3 + 1] - f[i * 3 + 2])
+
+        seen = [reddest(t) for t in range(0, ledfx.IDLE_PERIOD_MS // 2, 7500)]
+        for previous, following in zip(seen, seen[1:]):
+            self.assertGreater(following, previous, seen)
+
     def test_it_cannot_outrun_the_strobe_cap(self):
         # Not a special case in the cap logic, so state the margin explicitly.
         self.assertGreater(ledfx.IDLE_PERIOD_MS, ledfx.MIN_STROBE_PERIOD_MS * 100)

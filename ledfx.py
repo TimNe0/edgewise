@@ -464,7 +464,12 @@ class LedEngine:
             return
         offset = ((now_ms % IDLE_PERIOD_MS) * _WHEEL_N) // IDLE_PERIOD_MS
         for i in range(n):
-            w = ((offset + (i * _WHEEL_N) // n) % _WHEEL_N) * 3
+            # Minus, not plus. With `offset + i` a fixed colour sits at a lower
+            # index as time passes, so the wave travels *down* the ring --
+            # anticlockwise on the badge, against the direction the edges are
+            # numbered. fx_rainbow has the same quirk; it is left alone because
+            # its direction is a publisher's choice, and this one is ours.
+            w = ((offset - (i * _WHEEL_N) // n) % _WHEEL_N) * 3
             _set(buf, i,
                  _scale(_WHEEL[w], IDLE_LEVEL),
                  _scale(_WHEEL[w + 1], IDLE_LEVEL),

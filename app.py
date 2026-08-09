@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1

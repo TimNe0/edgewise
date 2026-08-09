@@ -125,6 +125,14 @@ class FakeMQTTClient:
         self._require_connection()
         pattern = topic.decode() if isinstance(topic, bytes) else topic
         self.subscriptions.append(pattern)
+        # umqtt.simple waits for the SUBACK with wait_msg(), which is the same
+        # call that dispatches incoming PUBLISHes -- so the broker's retained
+        # burst is delivered *inside* subscribe(), not afterwards. The fake did
+        # not model that, and the bug it hid emptied the board a second after
+        # it filled on real hardware.
+        if self.broker is not None and self.callback is not None:
+            for topic_name, payload in self.broker.matching(pattern):
+                self.callback(topic_name.encode(), payload)
 
     def publish(self, topic, msg, retain=False, qos=0):
         self._maybe_fail("publish")

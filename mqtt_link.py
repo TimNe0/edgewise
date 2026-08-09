@@ -256,6 +256,27 @@ class Link:
             client.set_last_will(self.spec.root() + "/availability",
                                  b"offline", retain=True, qos=QOS)
             client.connect()
+            # Bumped here -- after CONNACK, before the first subscribe -- and
+            # the ordering is load-bearing.
+            #
+            # umqtt.simple's subscribe() waits for its SUBACK by calling
+            # wait_msg(), which is the same function that dispatches incoming
+            # PUBLISHes to the callback. So the broker's retained burst lands in
+            # our inbox *during* these subscribe calls.
+            #
+            # This used to be bumped last, "so the UI cannot start a rebuild
+            # before the retained messages can arrive". The effect was the
+            # opposite: the UI drained those messages while the epoch was still
+            # the old one, stamped them with the previous generation, and then
+            # began a rebuild -- whose sweep deleted every slot it had just been
+            # told about. On hardware that looked like the board loading and
+            # then emptying itself a second later.
+            #
+            # Bumping first is safe in the other direction: nothing can be in
+            # the inbox before this line, and the UI checks the epoch before it
+            # drains, so any message it ever sees belongs to a rebuild that has
+            # already started.
+            self.session_epoch += 1
             for suffix in ("slot/+", "led", "text", "weather"):
                 client.subscribe(("%s/%s" % (self.spec.root(), suffix)).encode())
             client.publish((self.spec.root() + "/availability").encode(),
@@ -271,9 +292,6 @@ class Link:
         self.state = STATE_ONLINE
         self.state_msg = ""
         self.reconnects += 1
-        # Bumped last, after subscriptions are live, so the UI cannot start a
-        # retained rebuild before the retained messages can actually arrive.
-        self.session_epoch += 1
 
     def _service(self, now_ms):
         client = self._client

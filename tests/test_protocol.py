@@ -109,24 +109,66 @@ class TestConnection(unittest.TestCase):
         make.made[0].fire_will()
         self.assertEqual(broker.last("/availability"), b"offline")
 
-    def test_session_epoch_bumps_only_after_subscriptions_are_live(self):
-        # If it bumped first, the UI would open a retained-rebuild window
-        # before any retained message could arrive, and then sweep the board.
+    def test_session_epoch_bumps_before_the_first_subscribe(self):
+        """The ordering that made the board empty itself on real hardware.
+
+        This test previously asserted the opposite, on the reasoning that
+        bumping first would open a rebuild window before any retained message
+        could arrive. The reasoning was wrong about umqtt: subscribe() waits for
+        its SUBACK via wait_msg(), which is also what dispatches PUBLISHes, so
+        the retained burst lands *during* the subscribe calls.
+
+        Bumping last therefore meant the UI drained those messages under the old
+        generation, then started a rebuild whose sweep deleted every slot it had
+        just been told about. On the badge: the board filled, then emptied a
+        second later.
+
+        Any message in the inbox must belong to a rebuild that has already
+        begun, so the epoch has to move first.
+        """
         seen = {}
 
         def configure(client):
             original = client.subscribe
 
             def watched(topic, qos=0):
-                seen["epoch_at_subscribe"] = link.session_epoch
+                seen.setdefault("epoch_at_subscribe", link.session_epoch)
                 return original(topic, qos)
 
             client.subscribe = watched
 
         link, _ = make_link(configure=configure)
         link.pump(T0)
-        self.assertEqual(seen["epoch_at_subscribe"], 0)
+        self.assertEqual(seen["epoch_at_subscribe"], 1)
         self.assertEqual(link.session_epoch, 1)
+
+    def test_retained_messages_arrive_after_the_epoch_has_moved(self):
+        """The property that actually matters, stated directly."""
+        broker = FakeBroker()
+        cfg = make_cfg()
+        root = BrokerSpec(cfg).root()
+        broker.publish(root + "/slot/kiln", b'{"state":"needs_you"}', retain=True)
+
+        epochs = []
+
+        def configure(client):
+            original = client.set_callback
+
+            def wrapped(fn):
+                def spy(topic, payload):
+                    epochs.append(link.session_epoch)
+                    return fn(topic, payload)
+
+                return original(spy)
+
+            client.set_callback = wrapped
+
+        link, _ = make_link(broker, cfg=cfg, configure=configure)
+        link.pump(T0)
+        self.assertTrue(epochs, "no retained message was delivered")
+        # Never zero: a message seen under the old generation is a message the
+        # rebuild sweep will delete.
+        self.assertTrue(all(e == 1 for e in epochs), epochs)
 
     def test_no_broker_configured_does_not_start(self):
         cfg = make_cfg(host="")
@@ -344,8 +386,9 @@ class TestRetainedRebuild(unittest.TestCase):
         broker.publish(root + "/slot/build", b'{"state":"working"}', retain=True)
 
         link, make = make_link(broker, cfg=cfg)
+        # No deliver_retained() here: subscribe() replays them itself now, the
+        # way umqtt does, and calling both would deliver everything twice.
         link.pump(T0)
-        make.made[0].deliver_retained()
         for _ in range(4):
             link.pump(T0 + 10)
 

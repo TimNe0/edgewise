@@ -198,6 +198,22 @@ the tap happened, and it happened just now.
 what happened and where. The event topic is the one thing a subscriber has not
 already seen, so it stays boring on purpose.
 
+**An ack does not clear the retained slot.** The badge stops the edge asking
+locally, but the retained `needs_you` is still sitting on the broker — so the
+next time the badge reconnects it is told `needs_you` again and starts flashing
+again, and no amount of pressing buttons on the badge will make that stop.
+
+That is deliberate, and it is the whole two-way design: **the publisher owns the
+slot.** Whatever sent `needs_you` should be subscribed to `event`, and should
+clear or update the slot when it sees the ack —
+
+```sh
+mosquitto_sub -h $BROKER -t "edgewise/$ID/event" -C 1 | grep -q '"type":"ack"'   && mosquitto_pub -h $BROKER -t "edgewise/$ID/slot/kiln" -r -n
+```
+
+A slot published by hand for a test has nobody doing that, which is why it keeps
+coming back. Clear it by hand with an empty retained payload.
+
 **The badge does not interpret an ack.** It stops the edge asking, and that is
 all. What an ack *means* — approve the deploy, unpause the printer, mark the
 ticket done — is entirely the subscriber's decision. Read

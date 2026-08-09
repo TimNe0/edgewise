@@ -51,14 +51,20 @@ def markdown_files():
     return sorted(walk(ROOT, (".md",)))
 
 
-def code_only(text):
-    """Whole-line comments removed.
+DOCSTRING = re.compile('"' * 3 + r"(?:.|\n)*?" + '"' * 3
+                       + "|" + "'" * 3 + r"(?:.|\n)*?" + "'" * 3)
 
-    The installers *talk about* the things they promise not to do -- "if this
-    script ever grows a curl, do not run it" is the sentence a reviewer should
-    find in there. Scanning the comments too would make writing that warning
-    the one thing that trips the test.
+
+def code_only(text):
+    """Comments and docstrings removed.
+
+    The scripts *talk about* the things they promise not to do -- "if this ever
+    grows a curl, do not run it" is the sentence a reviewer should find in
+    there, and the HTTP bridge's docstring shows the `curl` commands a user is
+    meant to type. Scanning prose would make documenting a tool the one thing
+    that trips the test for using it.
     """
+    text = DOCSTRING.sub("", text)
     return "\n".join(line for line in text.split("\n")
                      if not line.lstrip().startswith("#"))
 

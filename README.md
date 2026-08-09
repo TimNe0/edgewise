@@ -116,6 +116,7 @@ reasoning behind the timings, is in [controls.md](controls.md).
 | [Claude Code](adapters/claude-code/README.md) | walk away and let the badge call you back; one edge per checkout |
 | [Home Assistant](adapters/home-assistant/README.md) | washing machine, doorbell, freezer; taps back into automations |
 | [CI](adapters/ci/README.md) | GitHub Actions workflow, and a one-liner for everything else |
+| [HTTP](adapters/http/README.md) | poke it with `curl`; or block until you tap the badge |
 | [OctoPrint](adapters/octoprint/README.md) | print finished, or wants filament |
 
 Writing your own is one `mosquitto_pub` line. The complete wire protocol —

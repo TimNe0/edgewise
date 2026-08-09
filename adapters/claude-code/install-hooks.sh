@@ -4,6 +4,7 @@
 #   ./install-hooks.sh              this project's .claude/settings.json
 #   ./install-hooks.sh --user       ~/.claude/settings.json (every project)
 #   ./install-hooks.sh --uninstall  remove them again
+#   ./install-hooks.sh --yes        do not ask; still prints and still backs up
 #
 # Prints exactly what it will write, asks first, backs up what it replaces, and
 # changes nothing on a second run. Needs no sudo, touches nothing but the
@@ -19,18 +20,29 @@ DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 HOOK="$DIR/edgewise-hook.sh"
 TARGET=".claude/settings.json"
 MODE=install
+ASSUME_YES=0
 
 for arg in "$@"; do
     case "$arg" in
     --user) TARGET="$HOME/.claude/settings.json" ;;
     --uninstall) MODE=uninstall ;;
+    --yes|-y) ASSUME_YES=1 ;;
     *) printf 'usage: %s [--user] [--uninstall]\n' "$0" >&2; exit 2 ;;
     esac
 done
 
-PY=python3
-command -v "$PY" >/dev/null 2>&1 || PY=python
-command -v "$PY" >/dev/null 2>&1 || {
+# `command -v python3` is not enough on Windows: the Microsoft Store ships an
+# "app execution alias" at that name which exists, resolves, and then prints an
+# advert instead of running your code. Ask each candidate to actually execute
+# something before believing in it.
+PY=""
+for candidate in python3 python py; do
+    if command -v "$candidate" >/dev/null 2>&1             && "$candidate" -c "" >/dev/null 2>&1; then
+        PY=$candidate
+        break
+    fi
+done
+[ -n "$PY" ] || {
     printf 'Python is needed to merge JSON safely. Without it, paste hooks.json\n'
     printf 'into %s by hand, replacing __EDGEWISE_HOOK__ with:\n  %s\n' "$TARGET" "$HOOK"
     exit 2
@@ -91,9 +103,19 @@ if [ "$NEW" = "$CURRENT" ]; then
 fi
 
 printf '\n%s will become:\n\n%s\n\n' "$TARGET" "$NEW"
-printf 'Write it? [y/N] '
-read -r reply </dev/tty
-case "$reply" in [yY]*) ;; *) printf 'Nothing written.\n'; exit 0 ;; esac
+if [ "$ASSUME_YES" = "1" ]; then
+    # --yes removes the question, not the evidence: the diff above still
+    # printed and the backup below still happens, so an unattended run leaves
+    # exactly the same trail as an attended one.
+    printf 'Writing (--yes).\n'
+else
+    printf 'Write it? [y/N] '
+    # /dev/tty, not stdin: a confirmation that can be satisfied by piping "y"
+    # into the script is not a confirmation. It also means this cannot be run
+    # unattended without saying so, which is what --yes is for.
+    read -r reply </dev/tty
+    case "$reply" in [yY]*) ;; *) printf 'Nothing written.\n'; exit 0 ;; esac
+fi
 
 mkdir -p "$(dirname "$TARGET")"
 [ -f "$TARGET" ] && cp "$TARGET" "$TARGET.edgewise-backup"

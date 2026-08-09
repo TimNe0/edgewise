@@ -27,7 +27,9 @@ edgewise-pub -- publish one slot update to an Edgewise badge.
 
 Config, read from ~/.config/edgewise/env (or $EDGEWISE_ENV) and the environment:
 
-  EDGEWISE_ID       required, the 26-char device ID from Settings -> Device ID
+  EDGEWISE_ID       required, the 26-char device ID from Settings -> Device ID.
+                    Several badges? Separate them with spaces and every one
+                    gets the same board.
   EDGEWISE_BROKER   required, hostname or IP
   EDGEWISE_PORT     default 1883
   EDGEWISE_PREFIX   default edgewise. Must match Settings -> Broker -> Prefix
@@ -103,13 +105,22 @@ slot_name() {
         | cut -c1-16
 }
 
-# publish <topic-suffix> <payload> <retain: 1|0>
 # An empty payload with retain=1 is the MQTT retained-clear idiom and is how a
-# slot is deleted.
+# slot is deleted. Unquoted $EDGEWISE_ID on purpose: word splitting is how a
+# list of badges becomes a loop, and a device ID is 26 characters of base32 so
+# it can never contain anything a shell would object to.
+# publish <topic-suffix> <payload> <retain: 1|0>, to every configured badge.
 publish() {
-    _topic="$EDGEWISE_PREFIX/$EDGEWISE_ID/$1"
-    _payload=$2
-    _retain=$3
+    for _id in $EDGEWISE_ID; do
+        _publish_one "$_id" "$1" "$2" "$3"
+    done
+    return 0
+}
+
+_publish_one() {
+    _topic="$EDGEWISE_PREFIX/$1/$2"
+    _payload=$3
+    _retain=$4
 
     set -- -h "$EDGEWISE_BROKER" -p "$EDGEWISE_PORT" -t "$_topic"
     if [ -n "$_payload" ]; then
@@ -158,7 +169,10 @@ case "${1:-}" in
     printf 'env file : %s\n' "$ENV_FILE"
     [ -r "$ENV_FILE" ] || printf '           (not readable -- using the environment only)\n'
     printf 'broker   : %s:%s\n' "${EDGEWISE_BROKER:-<unset>}" "$EDGEWISE_PORT"
-    printf 'topic    : %s/%s/slot/<name>\n' "$EDGEWISE_PREFIX" "${EDGEWISE_ID:-<unset>}"
+    for _id in ${EDGEWISE_ID:-<unset>}; do
+        printf 'topic    : %s/%s/slot/<name>
+' "$EDGEWISE_PREFIX" "$_id"
+    done
     printf 'labels   : %s\n' "$EDGEWISE_LABELS"
     require_config
     publish "text" '{"msg":"edgewise-pub check","duration":5}' 0

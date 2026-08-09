@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -147,6 +147,10 @@ class EdgewiseApp(app.App):
 
         self._loops = 0
         self._renders = 0
+        # Milliseconds spent in each phase over the stats window. The loop is
+        # running at 6 Hz on an idle badge with nothing to draw, so the cost is
+        # somewhere in here and guessing which has not been working.
+        self._phase_ms = {}
         self._worst_ms = 0
         self._stats_ms = 0
 
@@ -393,12 +397,27 @@ class EdgewiseApp(app.App):
         if self._stats_ms >= STATS_INTERVAL_MS:
             self._publish_stats()
 
+        mark = time.ticks_ms()
+
+        def phase(name):
+            # ticks_ms has 1 ms resolution, so a single fast phase reads zero;
+            # accumulated over ten seconds the totals still separate cleanly.
+            nonlocal mark
+            after = time.ticks_ms()
+            self._phase_ms[name] = (self._phase_ms.get(name, 0)
+                                    + time.ticks_diff(after, mark))
+            mark = after
+
         self.timesync.pump(now)
+        phase("sync")
         self._handle_buttons()
         self._handle_touch(now)
         self._handle_gestures(now)
+        phase("input")
         self._handle_flip(delta, now)
+        phase("imu")
         self._service_link(now)
+        phase("link")
 
         if self.screen == SCREEN_DEMO and self.demo.tick(now):
             self._dirty = True
@@ -415,7 +434,14 @@ class EdgewiseApp(app.App):
             self._dirty = True
 
         self._sync_layout(now)
+        phase("layout")
         self._drive_leds(delta, now)
+        phase("leds")
+        # The redraw check runs every iteration whether or not it draws, and it
+        # builds a tuple -- including a formatted clock string and a sorted copy
+        # of the weather -- to do it. On a 20 Hz loop that is a lot of garbage.
+        self._needs_draw()
+        phase("drawcheck")
 
     def _sync_layout(self, now):
         names = self.board.names()
@@ -917,10 +943,13 @@ class EdgewiseApp(app.App):
 
         if self.link is None:
             return
+        phases = ",".join('"%s":%d' % (k, v)
+                          for k, v in sorted(self._phase_ms.items()))
+        self._phase_ms = {}
         payload = ('{"loops_per_s":%d,"renders_per_s":%d,"worst_ms":%d,'
-                   '"free":%d,"slots":%d,"dropped_in":%d}') % (
+                   '"free":%d,"slots":%d,"dropped_in":%d,"ms":{%s}}') % (
             loops, renders, worst, free, len(self.board.slots),
-            self.link.dropped_in)
+            self.link.dropped_in, phases)
         self.link._queue(self.link.spec.root() + "/stats", payload.encode(), False)
 
     def _wall_clock(self):

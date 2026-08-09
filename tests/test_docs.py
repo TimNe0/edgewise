@@ -315,3 +315,36 @@ class TestOnScreenHintsAreTrue(unittest.TestCase):
         controls = read(os.path.join(ROOT, "controls.md"))
         self.assertIn("CONFIRM ack", self.views)
         self.assertIn("| CONFIRM | acknowledge", controls)
+
+
+class TestClaudeMd(unittest.TestCase):
+    """CLAUDE.md is the setup instructions a future session will follow without
+    a human checking them first, so the paths in it have to be real."""
+
+    def setUp(self):
+        self.text = read(os.path.join(ROOT, "CLAUDE.md"))
+
+    def test_every_script_it_tells_you_to_run_exists(self):
+        missing = []
+        for path in re.findall(r"\b((?:adapters|tools)/[\w/.-]+\.(?:sh|py))", self.text):
+            if not os.path.exists(os.path.join(ROOT, path)):
+                missing.append(path)
+        self.assertEqual(missing, [], "CLAUDE.md points at files that do not exist")
+
+    def test_it_documents_the_badge_notification_setup(self):
+        # The whole reason it exists: a new session should be able to make the
+        # badge report progress without being told how.
+        for needle in ("install-hooks.sh", "EDGEWISE_ID", "~/.config/edgewise/env"):
+            self.assertIn(needle, self.text, needle)
+
+    def test_the_hardware_facts_match_the_code(self):
+        # These were each found on hardware and cost a release. If the code
+        # changes, this note has to change with it.
+        import edgewise.views as views_mod
+        from edgewise import boards
+
+        self.assertIn("hardware indices 1-12", self.text.replace("–", "-"))
+        profile = boards.load({"board": boards.KEY_2024})
+        self.assertEqual(profile.led_offset, 1)
+        self.assertIn("30", self.text)
+        self.assertEqual(views_mod.EDGE_CENTRE_OFFSET_DEG, 30.0)

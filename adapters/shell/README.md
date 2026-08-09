@@ -11,6 +11,7 @@ Create `~/.config/edgewise/env`:
 mkdir -p ~/.config/edgewise
 cat > ~/.config/edgewise/env <<'EOF'
 EDGEWISE_ID=PUT-YOUR-26-CHAR-DEVICE-ID-HERE
+# Two badges? EDGEWISE_ID="AAAA...  BBBB..."
 EDGEWISE_BROKER=192.168.1.10
 # EDGEWISE_PORT=1883
 # EDGEWISE_PREFIX=edgewise
@@ -66,7 +67,7 @@ replaced with `-`, because a slot name is one level of an MQTT topic.
 
 | | |
 |---|---|
-| `EDGEWISE_ID` | required. The 26-character device ID from Settings → Device ID |
+| `EDGEWISE_ID` | required. The 26-character device ID from Settings → Device ID. **Several badges: separate them with spaces** and every one gets the same board |
 | `EDGEWISE_BROKER` | required. Hostname or IP |
 | `EDGEWISE_PORT` | default 1883 |
 | `EDGEWISE_PREFIX` | default `edgewise`. Must match Settings → Broker → Prefix |

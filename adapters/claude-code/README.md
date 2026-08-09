@@ -1,7 +1,14 @@
 # Claude Code
 
-One edge per checkout. Amber while it is working, cyan and flashing when it
-wants you, green when it is done, dark when the session ends.
+**Walk away from the machine and let the badge call you back.** One edge per
+checkout: amber while it is working, cyan and flashing when it wants you, green
+when it is done, dark when the session ends.
+
+That is the point of it. An agent that runs for ten minutes is an agent you
+stop watching, and a terminal notification only reaches you at the terminal.
+
+It works for every future session without anything having to remember it: the
+hooks live in a settings file and *the harness* runs them, not the model.
 
 This is one adapter among several — the badge has no idea what a coding agent
 is, and the same four states come from CI, cron and a 3D printer elsewhere in
@@ -15,7 +22,12 @@ through it. Then:
 ```sh
 ./install-hooks.sh          # this project only
 ./install-hooks.sh --user   # every project
+./install-hooks.sh --user --yes   # no confirmation prompt
 ```
+
+`--yes` removes the question, not the evidence: it still prints the diff it is
+about to write and still keeps a backup. Use it when something else is driving
+the install.
 
 It prints the exact JSON it will write, asks, and keeps a backup at
 `settings.json.edgewise-backup`. Your other settings and your other hooks are
@@ -25,6 +37,15 @@ preserved; running it twice changes nothing the second time; and
 It needs Python for the merge. Without it, paste [hooks.json](hooks.json) in by
 hand and replace `__EDGEWISE_HOOK__` with the absolute path to
 `edgewise-hook.sh`.
+
+**On Windows**, `python3` may resolve to the Microsoft Store's app execution
+alias, which exists, runs, and prints an advert instead of executing anything.
+The installer asks each candidate interpreter to execute something before
+believing in it, so this is handled — but it is why `command -v python3` is not
+enough if you are writing something similar.
+
+**The hooks embed an absolute path to this checkout.** Move the repo and
+re-run the installer.
 
 Nothing here needs sudo, and nothing downloads anything. If a future version of
 this script grows a `curl`, do not run it.
@@ -38,6 +59,14 @@ this script grows a `curl`, do not run it.
 | `Stop` | `done` — green |
 | `SessionEnd` | slot cleared, edge fades out |
 
+`Notification` fires when Claude Code itself raises one — a permission prompt,
+or an idle wait. It does not fire for every question an agent might ask, so if
+you want the badge lit whenever you are blocked, publish it directly:
+
+```sh
+../shell/edgewise-pub.sh "$(basename "$PWD")" needs_you "waiting on a decision"
+```
+
 The slot name is the basename of `CLAUDE_PROJECT_DIR` (falling back to the
 session's `cwd`), lowercased and truncated to 16 characters. Two checkouts get
 two edges. Two sessions in one checkout share an edge, which is usually what you
@@ -46,6 +75,15 @@ want — you care about the project, not the terminal.
 Tap the edge to acknowledge. That publishes an `ack` event and stops the edge
 flashing; it does not tell Claude Code anything, unless you turn on the approve
 flow below.
+
+## More than one badge
+
+`EDGEWISE_ID` takes a list, and every publish reaches all of them — a badge on
+the desk and another in the workshop show the same board:
+
+```sh
+EDGEWISE_ID="AAAAAAAAAAAAAAAAAAAAAAAAAA BBBBBBBBBBBBBBBBBBBBBBBBBB"
+```
 
 ## Privacy
 

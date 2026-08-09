@@ -15,6 +15,43 @@ apart.
 Writing your own is one `mosquitto_pub` line — see
 [docs/protocol.md](../docs/protocol.md).
 
+## Running several at once
+
+They are designed to. Home Assistant, a CI job, a 3D printer and a coding
+session can all drive one badge at the same time, and nothing needs to know
+about the others — that is what made MQTT the right transport.
+
+**Slot names are the namespace.** Each publisher owns the slots it names, and
+`slot/<name>` topics never interfere. Two publishers that both pick `build`
+will fight over one edge, so prefix if that is a risk: `ci-build`, `ha-wash`.
+The Claude Code adapter names slots after the project directory, which collides
+with nothing by accident.
+
+**Twelve slots are tracked, six are shown.** With more than six, the most urgent
+win the edges — `needs_you` and `error` first, then by recency. The rest are
+still there and reappear as others clear. Nothing is lost, but a badge with
+eleven publishers is a badge you have stopped reading.
+
+**Three topics are singletons**, and this is the one real caveat:
+
+| Topic | Behaviour with several publishers |
+|---|---|
+| `led` | last writer wins for that segment, until its TTL lapses |
+| `text` | last message replaces the one on screen |
+| `weather` | last writer wins; retained, so it persists |
+
+Two things publishing `weather` every ten minutes will flicker between them.
+Pick one source per singleton topic. Slots have no such problem.
+
+**The rate limit is shared.** About five messages a second across everything,
+with a burst of ten. Normal publishers are nowhere near it; a runaway one can
+crowd out the others, and the badge says so on its status line rather than
+failing quietly.
+
+**Events are broadcast.** Every subscriber sees every `ack`, including acks
+meant for someone else's slot — filter on `slot` before acting. The Home
+Assistant examples do.
+
 ## Conventions every adapter here follows
 
 **Retained slot updates.** The badge holds no state that matters and rebuilds

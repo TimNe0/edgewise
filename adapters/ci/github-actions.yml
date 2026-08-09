@@ -1,0 +1,64 @@
+# Edgewise status reporting for GitHub Actions.
+#
+# Copy the two steps into your own workflow, or use this as-is. Set these as
+# repository secrets (Settings -> Secrets and variables -> Actions):
+#
+#   EDGEWISE_ID       the 26-character device ID from Settings -> Device ID
+#   EDGEWISE_BROKER   hostname or IP of your broker
+#   EDGEWISE_USER     broker username    (omit the -u/-P flags if unauthenticated)
+#   EDGEWISE_PASS     broker password
+#
+# A GitHub-hosted runner cannot reach a broker on your desk. Use a self-hosted
+# runner on the same network, or a broker that is reachable and authenticated.
+# See README.md.
+
+name: test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      SLOT: ${{ github.event.repository.name }}
+      TOPIC_ROOT: edgewise/${{ secrets.EDGEWISE_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mosquitto-clients
+        run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
+
+      # Retained, always: the badge rebuilds the board from retained messages
+      # when it reconnects. The TTL is longer than the job timeout, so a runner
+      # killed mid-job leaves an edge that fades rather than one stuck amber.
+      - name: Badge -> working
+        run: |
+          mosquitto_pub -h "${{ secrets.EDGEWISE_BROKER }}" \
+            -u "${{ secrets.EDGEWISE_USER }}" -P "${{ secrets.EDGEWISE_PASS }}" \
+            -t "$TOPIC_ROOT/slot/$SLOT" -r \
+            -m "{\"state\":\"working\",\"label\":\"$SLOT\",\"ttl\":7200}"
+        continue-on-error: true
+
+      - name: Run the tests
+        run: python -m unittest discover -t . -s tests
+
+      # if: always() is the whole trick. A reporting step that only runs on
+      # success leaves the edge amber forever exactly when you needed it red.
+      # continue-on-error keeps a broker outage from failing an otherwise good
+      # build -- a status light must never be able to break the thing it reports
+      # on.
+      - name: Badge -> done or error
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATE=done
+            MSG=""
+          else
+            STATE=error
+            MSG=",\"msg\":\"${{ github.ref_name }} failed\""
+          fi
+          mosquitto_pub -h "${{ secrets.EDGEWISE_BROKER }}" \
+            -u "${{ secrets.EDGEWISE_USER }}" -P "${{ secrets.EDGEWISE_PASS }}" \
+            -t "$TOPIC_ROOT/slot/$SLOT" -r \
+            -m "{\"state\":\"$STATE\",\"label\":\"$SLOT\"$MSG,\"ttl\":86400}"

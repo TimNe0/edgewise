@@ -9,6 +9,10 @@
 *.yaml text eol=lf
 Makefile text eol=lf
 
+# Some adapter scripts have no extension (run-and-report), so the *.sh rule
+# above misses exactly the ones a user is most likely to run directly.
+adapters/** text eol=lf
+
 # Keep dev-only files out of the tarball the app store downloads onto badges.
 # export-ignore only applies to `git archive`, which is how GitHub builds the
 # release tarball -- which is exactly what the store fetches.

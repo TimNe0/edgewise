@@ -1,0 +1,56 @@
+#!/bin/sh
+# run-and-report -- run a command, put its state on an edge of the badge.
+#
+#   run-and-report <slot> -- <command> [args...]
+#
+#   run-and-report backup -- restic backup /home
+#   run-and-report nightly -- make -C ~/src/thing test
+#
+# working while it runs, done on exit 0, error otherwise. The command's output
+# and its exit status pass straight through, so this is safe to wrap around
+# something already in a Makefile or a crontab: if the badge is off, or the
+# broker is down, the only difference is a line on stderr.
+#
+# In cron, remember that cron's environment is nearly empty. Either set
+# EDGEWISE_ENV to an absolute path, or rely on the default ~/.config/edgewise/env
+# with HOME set -- cron does set HOME, but it does not source your profile.
+
+set -u
+
+PROG=$(basename "$0")
+PUB=${EDGEWISE_PUB:-$(dirname "$0")/edgewise-pub.sh}
+
+if [ $# -lt 3 ]; then
+    printf 'usage: %s <slot> -- <command> [args...]\n' "$PROG" >&2
+    exit 2
+fi
+
+SLOT=$1
+shift
+if [ "$1" != "--" ]; then
+    printf '%s: expected -- between the slot name and the command\n' "$PROG" >&2
+    exit 2
+fi
+shift
+
+if [ ! -x "$PUB" ]; then
+    printf '%s: %s is not executable; running the command unreported\n' "$PROG" "$PUB" >&2
+    exec "$@"
+fi
+
+# A long job should not have its edge expire while it is still running, so the
+# working state gets a generous TTL and the terminal state gets the default.
+EDGEWISE_TTL=${EDGEWISE_RUN_TTL:-86400} "$PUB" "$SLOT" working "$*"
+
+# The command owns stdout and stderr entirely. Nothing is captured, buffered or
+# echoed back -- wrapping a job should not change what it prints or when.
+"$@"
+STATUS=$?
+
+if [ "$STATUS" -eq 0 ]; then
+    "$PUB" "$SLOT" done
+else
+    "$PUB" "$SLOT" error "exit $STATUS"
+fi
+
+exit "$STATUS"

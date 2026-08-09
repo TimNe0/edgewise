@@ -1,0 +1,132 @@
+# Edgewise example automations for Home Assistant.
+#
+# Replace YOUR_DEVICE_ID with the ID from Settings -> Device ID on the badge,
+# and the entity ids with your own. Everything else is copy-paste.
+#
+# Slot updates are published with retain: true. The badge holds no state that
+# matters and rebuilds the whole board from retained messages when it
+# reconnects, so a slot published without retain vanishes on the next reboot.
+# Screen text is not retained -- a message that reappeared every time the badge
+# reconnected would be a nuisance rather than a reminder.
+
+- id: edgewise_washing_machine_done
+  alias: "Edgewise: washing machine finished"
+  trigger:
+    - platform: state
+      entity_id: sensor.washing_machine_state
+      to: "finished"
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "edgewise/YOUR_DEVICE_ID/slot/wash"
+        retain: true
+        payload: >-
+          {"state":"done","label":"wash","msg":"ready to hang out","ttl":21600}
+
+# Emptying the machine clears the edge. An empty retained payload is the MQTT
+# retained-clear idiom: it removes the message from the broker's store as well
+# as the edge from the board.
+- id: edgewise_washing_machine_emptied
+  alias: "Edgewise: washing machine emptied"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.washing_machine_door
+      to: "on"
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "edgewise/YOUR_DEVICE_ID/slot/wash"
+        retain: true
+        payload: ""
+
+- id: edgewise_doorbell
+  alias: "Edgewise: doorbell"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.doorbell
+      to: "on"
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "edgewise/YOUR_DEVICE_ID/text"
+        payload: '{"msg":"someone at the door","level":"alert","duration":60}'
+
+# error is red and does not fade to something calmer on its own, which is the
+# point: a freezer warming up should still be red in an hour.
+- id: edgewise_freezer_warm
+  alias: "Edgewise: freezer too warm"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.freezer_temperature
+      above: -15
+      for: "00:10:00"
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "edgewise/YOUR_DEVICE_ID/slot/freezer"
+        retain: true
+        payload: >-
+          {"state":"error","label":"freezer",
+           "msg":"{{ states('sensor.freezer_temperature') }}C","ttl":86400}
+
+- id: edgewise_freezer_ok
+  alias: "Edgewise: freezer back to normal"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.freezer_temperature
+      below: -18
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "edgewise/YOUR_DEVICE_ID/slot/freezer"
+        retain: true
+        payload: ""
+
+# The two-way half: a tap on the badge dismisses the thing that caused it.
+#
+# What an ack *means* is decided here, not on the badge -- the badge only
+# reports that someone pressed something. Think about that before wiring one to
+# anything that unlocks, starts or spends.
+- id: edgewise_ack_dismisses
+  alias: "Edgewise: tap dismisses the wash reminder"
+  trigger:
+    - platform: mqtt
+      topic: "edgewise/YOUR_DEVICE_ID/event"
+  condition:
+    - condition: template
+      value_template: >-
+        {{ trigger.payload_json.type == 'ack'
+           and trigger.payload_json.slot == 'wash' }}
+  action:
+    - service: persistent_notification.dismiss
+      data:
+        notification_id: washing_machine
+
+# Face the badge down and the whole board dims. Useful for a video call.
+- id: edgewise_snooze_mutes_alerts
+  alias: "Edgewise: snooze mutes noisy alerts"
+  trigger:
+    - platform: mqtt
+      topic: "edgewise/YOUR_DEVICE_ID/event"
+  condition:
+    - condition: template
+      value_template: "{{ trigger.payload_json.type in ['snooze', 'wake'] }}"
+  action:
+    - service: input_boolean.turn_{{ 'on' if trigger.payload_json.type == 'snooze' else 'off' }}
+      target:
+        entity_id: input_boolean.quiet_hours
+
+# A badge that has quietly died looks exactly like a badge with nothing to
+# report, so let it tell you. This rides the MQTT Last Will, which means the
+# broker publishes it even when the badge loses power mid-sentence.
+- id: edgewise_badge_offline
+  alias: "Edgewise: badge went offline"
+  trigger:
+    - platform: mqtt
+      topic: "edgewise/YOUR_DEVICE_ID/availability"
+      payload: "offline"
+  action:
+    - service: persistent_notification.create
+      data:
+        title: "Edgewise"
+        message: "The badge has gone offline."

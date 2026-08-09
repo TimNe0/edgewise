@@ -39,6 +39,7 @@ Config, read from ~/.config/edgewise/env (or $EDGEWISE_ENV) and the environment:
   EDGEWISE_TTL      default 3600 seconds; the edge fades out after this
   EDGEWISE_EDGE     optional 0-5, pins the slot to one edge
   EDGEWISE_LABELS   name (default) or hash
+  EDGEWISE_MOSQUITTO  full path to mosquitto_pub, if it is somewhere unusual
 
 Privacy: slot names are usually project names, and the topic itself leaks them
 on a public broker -- not just the label. EDGEWISE_LABELS=hash replaces the name
@@ -66,6 +67,34 @@ fi
 : "${EDGEWISE_TLS:=0}"
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# mosquitto_pub, wherever it lives. A hook fired by an editor does not inherit
+# the PATH of the shell you set it up in -- on Windows especially, where the
+# installer is nowhere near the default PATH -- and "not found" from a hook is
+# invisible. Set EDGEWISE_MOSQUITTO to skip the search entirely.
+MOSQ=""
+find_mosquitto() {
+    [ -n "$MOSQ" ] && return 0
+    if [ -n "${EDGEWISE_MOSQUITTO:-}" ] && [ -x "$EDGEWISE_MOSQUITTO" ]; then
+        MOSQ=$EDGEWISE_MOSQUITTO
+        return 0
+    fi
+    if have mosquitto_pub; then
+        MOSQ=mosquitto_pub
+        return 0
+    fi
+    for _dir in         "/c/Program Files/mosquitto"         "/c/Program Files (x86)/mosquitto"         "/opt/homebrew/bin"         "/usr/local/bin"         "/usr/bin"; do
+        if [ -x "$_dir/mosquitto_pub" ]; then
+            MOSQ="$_dir/mosquitto_pub"
+            return 0
+        fi
+        if [ -x "$_dir/mosquitto_pub.exe" ]; then
+            MOSQ="$_dir/mosquitto_pub.exe"
+            return 0
+        fi
+    done
+    return 1
+}
 
 # ---------------------------------------------------------------- helpers
 
@@ -136,9 +165,9 @@ _publish_one() {
     # A broker that accepts the TCP connection and then never answers would
     # hang an editor hook forever, so cap it wherever timeout(1) exists.
     if have timeout; then
-        timeout 5 mosquitto_pub "$@" || warn "publish to $_topic failed"
+        timeout 5 "$MOSQ" "$@" || warn "publish to $_topic failed"
     else
-        mosquitto_pub "$@" || warn "publish to $_topic failed"
+        "$MOSQ" "$@" || warn "publish to $_topic failed"
     fi
     return 0
 }
@@ -146,7 +175,7 @@ _publish_one() {
 require_config() {
     [ -n "${EDGEWISE_ID:-}" ] || die "EDGEWISE_ID is not set (see $ENV_FILE)"
     [ -n "${EDGEWISE_BROKER:-}" ] || die "EDGEWISE_BROKER is not set (see $ENV_FILE)"
-    have mosquitto_pub || die "mosquitto_pub not found -- install mosquitto-clients, or use edgewise_pub.py"
+    find_mosquitto || die "mosquitto_pub not found on PATH or in the usual places -- set EDGEWISE_MOSQUITTO, install mosquitto-clients, or use edgewise_pub.py"
 }
 
 topic_name() {

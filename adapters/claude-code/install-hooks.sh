@@ -49,10 +49,44 @@ done
 }
 [ -x "$HOOK" ] || { printf 'not executable: %s\n  chmod +x %s\n' "$HOOK" "$HOOK" >&2; exit 2; }
 
-NEW=$("$PY" - "$TARGET" "$HOOK" "$MODE" <<'PY'
+# On Windows the editor runs hooks through cmd, which has no idea what a .sh
+# file is: it exits 0, does nothing, and the hook looks installed while firing
+# into a void. That is exactly how this was found -- the badge simply never lit.
+# So name an interpreter explicitly there.
+LAUNCH=""
+case "$(uname -s 2>/dev/null || echo unknown)" in
+MINGW*|MSYS*|CYGWIN*|Windows*)
+    for candidate in \
+        "/c/Program Files/Git/bin/bash.exe" \
+        "/c/Program Files/Git/usr/bin/sh.exe" \
+        "$(command -v bash 2>/dev/null || true)"; do
+        if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+            # A Windows path, because cmd is what reads this string, not sh.
+            LAUNCH="$(cd "$(dirname "$candidate")" && pwd -W 2>/dev/null)/$(basename "$candidate")"
+            case "$LAUNCH" in /*) LAUNCH=$candidate ;; esac
+            break
+        fi
+    done
+    [ -n "$LAUNCH" ] || {
+        printf 'No bash found to run the hook with. Install Git for Windows,\n'
+        printf 'or add the hook to %s by hand.\n' "$TARGET"
+        exit 2
+    }
+    ;;
+esac
+
+NEW=$("$PY" - "$TARGET" "$HOOK" "$MODE" "$LAUNCH" <<'PY'
 import json, sys
 
 target, hook, mode = sys.argv[1:4]
+launch = sys.argv[4] if len(sys.argv) > 4 else ""
+
+
+def command_for(state):
+    """What goes in settings.json. Quoted, because Program Files has a space."""
+    if launch:
+        return '"%s" "%s" %s' % (launch, hook, state)
+    return "%s %s" % (hook, state)
 # Every event the badge cares about, and the state it becomes.
 EVENTS = [("UserPromptSubmit", "working"), ("Notification", "needs_you"),
           ("Stop", "done"), ("SessionEnd", "clear")]
@@ -86,7 +120,7 @@ for event, groups in list(hooks.items()):
 if mode == "install":
     for event, state in EVENTS:
         hooks.setdefault(event, []).append({"hooks": [
-            {"type": "command", "command": "%s %s" % (hook, state), "timeout": 5}]})
+            {"type": "command", "command": command_for(state), "timeout": 5}]})
 
 if hooks:
     settings["hooks"] = hooks

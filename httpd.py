@@ -292,3 +292,142 @@ def json_error(reason):
     safe = "".join(c for c in str(reason) if c.isalpha() or c.isdigit()
                    or c in " .,:/<>-_?=")
     return '{"error":"%s"}' % safe
+
+
+class Server:
+    """The socket half. Thin on purpose -- everything above is testable.
+
+    One asyncio task per connection, capped at MAX_CONNECTIONS, each with a
+    deadline. The handler is a callback into the app so this module never
+    touches the board, the config or the LEDs.
+    """
+
+    def __init__(self, port, token, handler, limiter=None):
+        self.port = port
+        self.token = token
+        self.handler = handler          # (kind, name, payload) -> (status, body)
+        self.limiter = limiter
+        self.requests = 0
+        self.rejected = 0
+        self._server = None
+        self._open = 0
+
+    async def start(self):
+        import asyncio
+
+        self._server = await asyncio.start_server(self._client, "0.0.0.0",
+                                                  self.port)
+        return self._server
+
+    async def stop(self):
+        server, self._server = self._server, None
+        if server is None:
+            return
+        try:
+            server.close()
+            await server.wait_closed()
+        except Exception:  # noqa: BLE001 - already going away
+            pass
+
+    async def _client(self, reader, writer):
+        import asyncio
+
+        if self._open >= MAX_CONNECTIONS:
+            # 503 rather than a queue: a caller told to come back can, and a
+            # queue on a badge is a slower way to run out of sockets.
+            #
+            # Closing here is not tidiness. Returning without it leaves the
+            # rejected socket open -- leaking the very resource the ceiling
+            # exists to protect, and hanging any client that reads to EOF.
+            # A live test caught this; reading the code did not.
+            self.rejected += 1
+            await self._send(writer, response(503, json_error("busy")))
+            await _close(writer)
+            return
+        self._open += 1
+        try:
+            await asyncio.wait_for(self._serve(reader, writer),
+                                   CONNECTION_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - a timeout is a hang-up, not a fault
+            pass
+        finally:
+            self._open -= 1
+            await _close(writer)
+
+    async def _serve(self, reader, writer):
+        raw = await reader.readline()
+        method, path, query = parse_request_line(
+            raw.decode().strip() if raw else "")
+        if method is None:
+            return await self._send(writer, response(400, json_error(path)))
+
+        headers = []
+        while len(headers) <= MAX_HEADERS:
+            line_bytes = await reader.readline()
+            if not line_bytes or line_bytes in (b"\r\n", b"\n"):
+                break
+            headers.append(line_bytes.decode().strip())
+        head = parse_headers(headers)
+
+        # Read the body only to get it off the socket. Nothing here takes input
+        # from one -- everything is in the query string -- but an unread body
+        # leaves the connection half-spoken.
+        length = _int(head.get("content-length"), 0, MAX_BODY)
+        if head.get("content-length") and length is None:
+            return await self._send(writer, response(413, json_error("body too large")))
+        if length:
+            await reader.read(length)
+
+        kind, name, payload = route(path, query)
+        if kind is None:
+            return await self._send(writer, response(404, json_error(name)))
+        if needs_token(kind) and not self._authorised(head, query):
+            return await self._send(writer, response(401, json_error("bad token")))
+
+        # The same budget MQTT is held to. Without this, HTTP would be a way
+        # around the flood protection rather than another door into it.
+        if self.limiter is not None and needs_token(kind):
+            if not self.limiter.allow(_now_ms()):
+                self.rejected += 1
+                return await self._send(writer, response(429, json_error("slow down")))
+
+        self.requests += 1
+        status, body = await self.handler(kind, name, payload)
+        await self._send(writer, response(status, body))
+
+    def _authorised(self, headers, query):
+        return token_ok(self.token, headers, query)
+
+    async def _send(self, writer, raw):
+        writer.write(raw)
+        try:
+            await writer.drain()
+        except Exception:  # noqa: BLE001 - the caller hung up
+            pass
+
+
+async def _close(writer):
+    """Close a stream on either asyncio.
+
+    MicroPython grew `aclose()`; CPython has `close()` then `wait_closed()`.
+    Trying both is three lines and means the whole server can be exercised on a
+    desktop, which for the first listener on this device is worth a great deal
+    more than three lines.
+    """
+    try:
+        closer = getattr(writer, "aclose", None)
+        if closer is not None:
+            await closer()
+            return
+        writer.close()
+        waiter = getattr(writer, "wait_closed", None)
+        if waiter is not None:
+            await waiter()
+    except Exception:  # noqa: BLE001 - the caller may have hung up first
+        pass
+
+
+def _now_ms():
+    from . import clock
+
+    return clock.now_ms()

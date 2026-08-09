@@ -39,6 +39,11 @@ DEFAULT_PORT = 1883
 DEFAULT_PREFIX = "edgewise"
 MAX_PREFIX = 32
 
+HTTP_PORT = 8420
+# Short enough to read off a screen and type; 40 bits of base32 is far more
+# than a LAN convenience token needs.
+HTTP_TOKEN_CHARS = 8
+
 ROTATIONS = (0, 1, 2, 3, 4, 5)
 PALETTES = ("default", "warm", "mono")
 BRIGHTNESS_MIN = 10
@@ -82,6 +87,12 @@ DEFAULTS = {
     # On: hand the ring back to the badge's own pattern generator when
     # there is nothing to report. Off: hold the ring and keep it dark.
     "idle_pattern": True,
+    # The badge's own HTTP door. Off by default: an update that silently opens
+    # a port on someone's badge is not a thing to do, and turning it on is one
+    # press that then shows you the address.
+    "http_enabled": False,
+    "http_port": 8420,
+    "http_token": "",
     # Cleared once the demo has played, so it only introduces itself once.
     "seen_demo": False,
 }
@@ -226,6 +237,16 @@ def validate(cfg):
     out["utc_offset"] = int(_clamp_number(
         out.get("utc_offset"), UTC_OFFSET_MIN, UTC_OFFSET_MAX, 0))
     out["idle_pattern"] = bool(out.get("idle_pattern"))
+
+    out["http_enabled"] = bool(out.get("http_enabled"))
+    out["http_port"] = int(_clamp_number(
+        out.get("http_port"), 1024, 65535, HTTP_PORT))
+    token = out.get("http_token")
+    if not isinstance(token, str) or len(token) != HTTP_TOKEN_CHARS:
+        # Generated on first validation, like the device ID, so a badge is
+        # never briefly listening with an empty token.
+        token = security.new_token(HTTP_TOKEN_CHARS)
+    out["http_token"] = token
     out["palette"] = _clamp_choice(out.get("palette"), PALETTES, "default")
     out["max_slots"] = int(_clamp_number(
         out.get("max_slots"), MAX_SLOTS_MIN, MAX_SLOTS_MAX, DEFAULTS["max_slots"]))

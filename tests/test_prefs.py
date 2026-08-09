@@ -200,7 +200,7 @@ class TestEveryItemIsReachableAndSane(unittest.TestCase):
     def test_every_editable_key_exists_in_the_config(self):
         cfg = make_cfg()
         actions = ("device_id", "regenerate", "calibrate", "replay_demo",
-                   "version", "repo")
+                   "version", "repo", "http_regen")
         for _, _, items in prefs.GROUPS:
             for item in items:
                 if item.kind == prefs.KIND_ACTION:

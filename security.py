@@ -368,6 +368,16 @@ class RateLimiter:
 _B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
 
+def new_token(chars=8):
+    """A short random token, from the same source as the device ID.
+
+    Same caveat, written down in docs/security.md: where the firmware has no
+    urandom this falls back to a clock-seeded PRNG, and a guessable token on a
+    listener is worth more to an attacker than a guessable ID on a broker.
+    """
+    return new_device_id(max(5, (chars * 5 + 7) // 8))[:chars]
+
+
 def new_device_id(nbytes=16):
     """A 128-bit random identifier, base32, no padding.
 

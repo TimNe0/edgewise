@@ -22,10 +22,29 @@ from system.patterndisplay.events import (
 )
 
 from . import boards, clock, conf as C, demo as demo_mod, gestures as gest
-from . import prefs, timesync as timesync_mod
+from . import httpd, prefs, timesync as timesync_mod
 from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as touch_mod
 from . import views
 from .render_ctx import CtxRenderer
+
+
+def _wifi_up():
+    try:
+        import wifi
+
+        return bool(wifi.status())
+    except Exception:  # noqa: BLE001 - no wifi module off-badge
+        return False
+
+
+def _wifi_ip():
+    try:
+        import wifi
+
+        return wifi.get_ip() or "?"
+    except Exception:  # noqa: BLE001
+        return "?"
+
 
 def _off_pattern():
     """The firmware's own do-nothing pattern, if this build has one.
@@ -42,7 +61,7 @@ def _off_pattern():
         return None
 
 
-VERSION = "0.10.1"
+VERSION = "0.11.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -105,6 +124,12 @@ class EdgewiseApp(app.App):
         # in the firmware is inside the OTA updater. Ask for it ourselves,
         # on a thread, because settime() blocks on a UDP round trip.
         self.timesync = timesync_mod.TimeSync()
+
+        # The badge's own HTTP door, off unless asked for. Started from
+        # background_task once there is an address to bind to.
+        self.http = None
+        self._http_waiters = {}
+        self._http_restart = False
 
         # Two hardware sources, one recogniser: pads on a 2026 badge, the
         # highlighted edge plus CONFIRM on a 2024 one. Both absent is fine --
@@ -473,6 +498,137 @@ class EdgewiseApp(app.App):
             self.selected_edge = None
             self._dirty = True
 
+    # -- the badge's own HTTP door -------------------------------------------
+
+    async def background_task(self):
+        """The base loop, plus the listener.
+
+        `background_task` is what the scheduler creates per app and is where
+        the OS runs its own long-lived work. Starting the server here rather
+        than in `run()` means it keeps answering while the app is minimised,
+        which is the point: a poke should land whether or not you happen to be
+        looking at the badge.
+        """
+        import asyncio
+
+        asyncio.create_task(self._serve_http())
+        await super().background_task()
+
+    async def _serve_http(self):
+        """Bring the listener up, and take it down again when it is turned off.
+
+        Polled rather than assumed: Wi-Fi has to be up before there is an
+        address to bind to, and a badge that has not joined a network yet would
+        otherwise fail once and never try again.
+        """
+        import asyncio
+
+        while True:
+            if self._http_restart and self.http is not None:
+                # The port or the token moved under it. Closing here is what
+                # makes "turn it off" mean the socket actually goes away.
+                server, self.http = self.http, None
+                await server.stop()
+            self._http_restart = False
+
+            want = self.cfg["http_enabled"] and _wifi_up()
+            if want and self.http is None:
+                try:
+                    self.http = httpd.Server(
+                        self.cfg["http_port"], self.cfg["http_token"],
+                        self._http_request, self.limiter)
+                    await self.http.start()
+                    print("[edgewise] http on %s:%d"
+                          % (_wifi_ip(), self.cfg["http_port"]))
+                except Exception as exc:  # noqa: BLE001 - port taken, no wifi
+                    print("[edgewise] http failed:", exc)
+                    self.http = None
+            elif not want and self.http is not None:
+                server, self.http = self.http, None
+                await server.stop()
+            await asyncio.sleep(2)
+
+    async def _http_request(self, kind, name, payload):
+        """One request, answered through the handlers MQTT already uses.
+
+        Every payload goes through `security.parse_*` before it reaches the
+        board, so a slot set over HTTP and the same slot set over MQTT are
+        indistinguishable by the time anything is lit. That is the whole reason
+        this is a door and not a second implementation.
+        """
+        now = clock.now_ms()
+
+        if kind == httpd.KIND_HEALTH:
+            return (200, '{"ok":true,"version":"%s","slots":%d,"up_ms":%d}'
+                    % (VERSION, len(self.board.slots), self._uptime_ms))
+
+        if kind == httpd.KIND_SLOT:
+            parsed = security.parse_slot(payload)
+            if parsed is None:
+                return (400, httpd.json_error("not a valid slot update"))
+            self._apply_slot(name, parsed, now)
+            return (200, '{"slot":"%s","state":"%s"}' % (name, parsed["state"]))
+
+        if kind == httpd.KIND_TEXT:
+            parsed = security.parse_text(payload)
+            if parsed is None:
+                return (400, httpd.json_error("not a valid message"))
+            self._show_message(parsed, now)
+            return (200, '{"shown":true}')
+
+        if kind == httpd.KIND_WEATHER:
+            parsed = security.parse_weather(payload)
+            if parsed is None:
+                return (400, httpd.json_error("not a valid weather report"))
+            self._show_weather(parsed, now)
+            return (200, '{"weather":true}')
+
+        if kind == httpd.KIND_LED:
+            parsed = security.parse_led(payload)
+            if parsed is None:
+                return (400, httpd.json_error("not a valid led request"))
+            self.engine.set_raw(parsed, now)
+            return (200, '{"led":true}')
+
+        if kind == httpd.KIND_WAIT:
+            return await self._http_wait(name, payload["timeout"])
+
+        return (404, httpd.json_error("unknown endpoint"))
+
+    async def _http_wait(self, slot, seconds):
+        """Hold the request open until that slot is acknowledged or denied.
+
+        A tap becomes an exit code for anything that can call a URL. Bounded to
+        two waiters, because each is holding one of four sockets -- and a
+        timeout answers 408 rather than 200 with nothing in it, so a caller
+        cannot read "no answer" as approval.
+        """
+        import asyncio
+
+        if len(self._http_waiters) >= httpd.MAX_WAITERS:
+            return (503, httpd.json_error("too many waiting"))
+        box = [asyncio.Event(), None]
+        self._http_waiters.setdefault(slot, []).append(box)
+        try:
+            await asyncio.wait_for(box[0].wait(), seconds)
+        except Exception:  # noqa: BLE001 - a timeout is the expected ending
+            pass
+        finally:
+            waiting = self._http_waiters.get(slot) or []
+            if box in waiting:
+                waiting.remove(box)
+            if not waiting:
+                self._http_waiters.pop(slot, None)
+        if box[1] is None:
+            return (408, httpd.json_error("no answer"))
+        return (200, '{"type":"%s","slot":"%s"}' % (box[1], slot))
+
+    def _release_http_waiters(self, slot, kind):
+        """Called wherever a decision is recorded, however it was made."""
+        for box in self._http_waiters.pop(slot, []):
+            box[1] = kind
+            box[0].set()
+
     # -- LEDs ----------------------------------------------------------------
 
     def background_update(self, delta):
@@ -639,7 +795,8 @@ class EdgewiseApp(app.App):
                 "set a broker to begin" if self.prefs.needs_broker() else "")
         elif self.screen == SCREEN_DEVICE:
             self.device_view.draw(r, self.cfg["device_id"],
-                                  self.cfg["broker"]["prefix"])
+                                  self.cfg["broker"]["prefix"],
+                                  self._http_details())
         elif self.screen == SCREEN_CALIBRATE:
             self.calibrator.draw(r, self._cal_mode, self._cal_index,
                                  self.profile.led_count, self._cal_phase)
@@ -664,6 +821,13 @@ class EdgewiseApp(app.App):
         # Last, and never conditionally: a platform dialog is an overlay, and
         # without this it opens, takes every button, and draws nothing at all.
         self.draw_overlays(ctx)
+
+    def _http_details(self):
+        """What to show on the device screen, or None when the door is shut."""
+        if not self.cfg["http_enabled"]:
+            return None
+        return {"address": "%s:%d" % (_wifi_ip(), self.cfg["http_port"]),
+                "token": self.cfg["http_token"]}
 
     def _hhmm(self):
         """Local time, or None until the badge has been told what it is.
@@ -854,6 +1018,11 @@ class EdgewiseApp(app.App):
         elif item.key == "calibrate":
             # The calibrate screen has existed since M0 with nothing calling it.
             self.open_calibration()
+        elif item.key == "http_regen":
+            self.prefs.cfg = prefs.put(self.cfg, "http_token",
+                                       security.new_token(C.HTTP_TOKEN_CHARS))
+            self._commit_settings(item)
+            self.screen = SCREEN_DEVICE
         elif item.key == "replay_demo":
             self.cfg["seen_demo"] = False
             C.save(self.cfg)
@@ -877,6 +1046,10 @@ class EdgewiseApp(app.App):
             self.pads = gest.PadReader(self.profile)
         elif key.startswith("broker.") or key == "device_id":
             self._open_link()
+        elif key.startswith("http"):
+            # _serve_http notices on its next pass; dropping it here is what
+            # makes "turn it off" mean the socket actually closes.
+            self._http_restart = True
         self.engine.brightness = self.cfg["brightness"]
         self.engine.palette = self.cfg["palette"]
         self._dirty = True
@@ -962,6 +1135,7 @@ class EdgewiseApp(app.App):
         if name is None:
             return
         self._publish_event("ack", name, self.selected_edge)
+        self._release_http_waiters(name, "ack")
         # Locally the slot stops asking. What an ack *means* is the
         # subscriber's decision -- the badge never treats it as "safe" -- but
         # leaving the edge flashing after it has been acknowledged would train
@@ -978,6 +1152,7 @@ class EdgewiseApp(app.App):
         if name is None:
             return
         self._publish_event("deny", name, self.selected_edge)
+        self._release_http_waiters(name, "deny")
         self.notification = Notification("Denied")
         self._dirty = True
 

@@ -445,19 +445,33 @@ class DeviceIdView:
     Shown in two halves: 26 base32 characters on one line at a legible size do
     not fit a 240-pixel round screen, and this is a string people type."""
 
-    def draw(self, r, device_id, prefix):
+    def draw(self, r, device_id, prefix, http=None):
         r.clear(BG)
-        r.text("device id", 0, -84, ACCENT, size=13, align="center")
-        r.text(device_id[:13], 0, -52, FG, size=15, align="center")
-        r.text(device_id[13:], 0, -32, FG, size=15, align="center")
-        r.text("topic", 0, 2, (0.4, 0.4, 0.44), size=10, align="center")
-        r.text("%s/<id>/slot/<name>" % prefix, 0, 18, DIM, size=10,
+        r.text("device id", 0, -92, ACCENT, size=13, align="center")
+        r.text(device_id[:13], 0, -66, FG, size=15, align="center")
+        r.text(device_id[13:], 0, -48, FG, size=15, align="center")
+        r.text("%s/<id>/slot/<name>" % prefix, 0, -26, DIM, size=10,
                align="center")
-        r.text("anyone who knows this", 0, 52, (0.4, 0.4, 0.44), size=9,
+
+        if http:
+            # The address is the part that changes: DHCP hands out a new one
+            # whenever it feels like it, so the screen has to be the answer
+            # rather than something written down once.
+            r.text("http", 0, 4, ACCENT, size=12, align="center")
+            r.text(http.get("address", "no address"), 0, 24, FG, size=14,
+                   align="center")
+            r.text("token  " + http.get("token", ""), 0, 42, FG, size=13,
+                   align="center")
+        else:
+            r.text("http off", 0, 16, DIM, size=12, align="center")
+            r.text("Settings -> Device ID", 0, 34, (0.35, 0.35, 0.38),
+                   size=9, align="center")
+
+        r.text("anyone who knows these", 0, 66, (0.4, 0.4, 0.44), size=9,
                align="center")
-        r.text("can write to your lights", 0, 64, (0.4, 0.4, 0.44), size=9,
+        r.text("can write to your lights", 0, 78, (0.4, 0.4, 0.44), size=9,
                align="center")
-        r.text("CANCEL back", 0, 92, (0.4, 0.4, 0.44), size=9, align="center")
+        r.text("CANCEL back", 0, 96, (0.4, 0.4, 0.44), size=9, align="center")
 
 
 class MessageView:

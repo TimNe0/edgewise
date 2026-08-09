@@ -60,6 +60,9 @@ GROUPS = (
         Item("regenerate", "Regenerate", KIND_ACTION),
         Item("require_signed", "Require signed", KIND_TOGGLE),
         Item("hmac_key", "Signing key", KIND_PASSWORD),
+        Item("http_enabled", "HTTP access", KIND_TOGGLE),
+        Item("http_port", "HTTP port", KIND_NUMBER, low=1024, high=65535),
+        Item("http_regen", "New HTTP token", KIND_ACTION),
     )),
     ("board", "Board", (
         Item("board", "Board", KIND_CHOICE, choices=conf.BOARD_CHOICES),

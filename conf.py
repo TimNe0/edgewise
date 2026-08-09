@@ -207,7 +207,7 @@ def validate(cfg):
 
     out["board"] = _clamp_choice(out.get("board"), BOARD_CHOICES, boards.KEY_AUTO)
     board_map = out.get("board_map")
-    out["board_map"] = board_map if boards._valid_map(board_map, 12) else None
+    out["board_map"] = board_map if boards.valid_map(board_map, 12) else None
     out["rotation"] = int(_clamp_number(out.get("rotation"), 0, 5, 0))
 
     out["brightness"] = int(_clamp_number(

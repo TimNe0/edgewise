@@ -38,6 +38,7 @@ anything that spends money or moves a robot.
 """
 
 import argparse
+import hmac
 import json
 import os
 import re
@@ -52,6 +53,17 @@ CONDITIONS = ("clear", "part", "cloud", "rain", "snow", "storm", "fog", "wind")
 DEFAULT_PORT = 8420
 DEFAULT_WAIT_S = 300
 MAX_WAIT_S = 900
+
+# /wait holds a thread for as long as it waits, so without a ceiling a handful
+# of callers -- or one buggy retry loop -- can park every thread the process
+# will ever get and take the bridge down for everything else.
+MAX_WAITERS = 64
+
+# Nothing here reads a request body; this is only so a client that sends one is
+# drained rather than left half-spoken, and so a huge one is refused outright.
+MAX_BODY = 64 * 1024
+
+TOKEN_IN_URL = re.compile(r"([?&]token=)[^&\s]*")
 
 _ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$")
 _SLOT_OK = re.compile(r"^[A-Za-z0-9._-]{1,16}$")
@@ -195,6 +207,10 @@ class Waiters:
             if not boxes:
                 self._waiting.pop(slot, None)
 
+    def count(self):
+        with self._lock:
+            return sum(len(boxes) for boxes in self._waiting.values())
+
     def deliver(self, event):
         slot = event.get("slot")
         if not slot:
@@ -260,13 +276,35 @@ def make_handler(bridge, token):
 
         def _authorised(self, query):
             given = self.headers.get("X-Edgewise-Token") or one(query, "token")
-            # Constant-ish time: not meaningful against a LAN attacker who can
-            # read the header anyway, but free and stops the sloppiest guessing.
-            if given is None or len(given) != len(token):
+            if given is None:
                 return False
-            return sum(a != b for a, b in zip(given, token)) == 0
+            # compare_digest rather than ==: it is the right primitive, it costs
+            # nothing, and hand-rolling the comparison is how this goes wrong.
+            return hmac.compare_digest(given, token)
+
+        def _drain_body(self):
+            """Read and discard any body, or refuse an unreasonable one.
+
+            Nothing here takes input from a body -- everything is in the query
+            string -- but leaving one unread is how a POST from something like
+            a webhook ends up half-spoken on the socket.
+            """
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return False
+            if length > MAX_BODY:
+                return False
+            while length > 0:
+                chunk = self.rfile.read(min(length, 8192))
+                if not chunk:
+                    break
+                length -= len(chunk)
+            return True
 
         def _handle(self):
+            if not self._drain_body():
+                return self._reply(413, {"error": "body too large"})
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
 
@@ -291,6 +329,10 @@ def make_handler(bridge, token):
                 return self._reply(400, {"error": "usage: /wait/<slot>"})
             slot = unquote(parts[1])
             seconds = as_int(one(query, "timeout"), 1, MAX_WAIT_S) or DEFAULT_WAIT_S
+            if bridge.waiters.count() >= MAX_WAITERS:
+                # 503, not a queue: a caller told to come back is a caller that
+                # can, and a queue here is just a slower way to run out.
+                return self._reply(503, {"error": "too many waiters"})
             box = bridge.waiters.park(slot)
             try:
                 if box["event"].wait(seconds):
@@ -306,7 +348,12 @@ def make_handler(bridge, token):
         do_PUT = _handle
 
         def log_message(self, fmt, *args):
-            sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+            # The token may arrive as ?token=..., and the request line is what
+            # gets logged. Without this it lands in a file that gets tailed,
+            # pasted into bug reports and shipped to a log server -- a
+            # credential leak by way of being helpful.
+            line = TOKEN_IN_URL.sub(r"\1<redacted>", fmt % args)
+            sys.stderr.write("%s - %s\n" % (self.address_string(), line))
 
     return Handler
 
@@ -326,6 +373,8 @@ def main():
     bridge = Bridge(load_env())
     server = ThreadingHTTPServer((args.listen, args.port),
                                  make_handler(bridge, args.token))
+    # Otherwise a parked /wait keeps the process alive after Ctrl-C.
+    server.daemon_threads = True
     print("edgewise-http on %s:%d -> %d badge(s) via %s"
           % (args.listen, args.port, len(bridge.ids), bridge.host))
     try:

@@ -108,6 +108,17 @@ json_escape() {
         | cut -c1-"${2:-64}"
 }
 
+# Numbers that are about to be interpolated into JSON without quotes. Anything
+# that is not plainly an integer in range is a caller passing through something
+# it did not write, and is refused rather than embedded.
+is_int() {
+    case "$1" in
+    ""|*[!0-9-]*) return 1 ;;
+    -*) case "${1#-}" in ""|*[!0-9]*) return 1 ;; esac ;;
+    esac
+    [ "$1" -ge "$2" ] 2>/dev/null && [ "$1" -le "$3" ] 2>/dev/null
+}
+
 digest6() {
     if have sha256sum; then
         printf '%s' "$1" | sha256sum | cut -c1-6
@@ -126,11 +137,16 @@ digest6() {
 # A slot name becomes one level of an MQTT topic, so separators and wildcards
 # have to go. Lowercased and truncated so the same project lands on the same
 # slot however it was spelled.
+# A slot name ends up in four places with four different sets of dangerous
+# characters: an MQTT topic (/ # +), a JSON string (" \), a shell `case` pattern
+# (* ? [) and a grep -E pattern (. | ( ) [ *). An allowlist is the only version
+# of this that is safe in all four. The old denylist of "/#+ and space" was safe
+# in exactly one, and let `a|b` through to the approve flow's regex.
 slot_name() {
     printf '%s' "$1" \
         | tr -d '\000-\037' \
-        | tr '/#+ ' '----' \
         | tr '[:upper:]' '[:lower:]' \
+        | sed 's/[^a-z0-9._-]/-/g' \
         | cut -c1-16
 }
 
@@ -233,12 +249,18 @@ EOF
     esac
     payload="{\"cond\":\"$2\""
     if [ -n "${3:-}" ]; then
+        is_int "$3" -99 99 || die "temp must be a whole number from -99 to 99"
         payload="$payload,\"temp\":$3"
     fi
     if [ -n "${4:-}" ]; then
+        is_int "$4" 0 100 || die "rain must be a whole number from 0 to 100"
         payload="$payload,\"rain\":$4"
     fi
-    payload="$payload,\"unit\":\"${EDGEWISE_TEMP_UNIT:-C}\",\"ttl\":${EDGEWISE_WEATHER_TTL:-10800}}"
+    _unit=${EDGEWISE_TEMP_UNIT:-C}
+    [ "$_unit" = "F" ] || _unit=C
+    _wttl=${EDGEWISE_WEATHER_TTL:-10800}
+    is_int "$_wttl" 1 86400 || _wttl=10800
+    payload="$payload,\"unit\":\"$_unit\",\"ttl\":$_wttl}"
     # Retained, so the badge still knows the weather after a reboot; the TTL is
     # what stops it believing it forever.
     publish "weather" "$payload" 1

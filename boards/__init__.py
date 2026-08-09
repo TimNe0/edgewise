@@ -218,7 +218,7 @@ def load(cfg):
         return Profile(KEY_CUSTOM, "Unknown", 12, 1,
                        edge_leds(12, 0, rotation), source=SOURCE_FALLBACK)
 
-    if _valid_map(custom, mod.LED_COUNT):
+    if valid_map(custom, mod.LED_COUNT):
         groups = rotate_map(custom, rotation)
         source = SOURCE_CALIBRATED
     else:
@@ -239,7 +239,7 @@ def load(cfg):
     )
 
 
-def _valid_map(mapping, led_count):
+def valid_map(mapping, led_count):
     """A calibrated map is only usable if it covers the ring exactly once."""
     if not isinstance(mapping, (list, tuple)) or len(mapping) != EDGES:
         return False

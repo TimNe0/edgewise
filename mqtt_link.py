@@ -179,6 +179,15 @@ class Link:
         """Queue an outbound event. Never blocks, never raises."""
         self._queue(self.spec.root() + "/event", payload, False)
 
+    def publish_status(self, suffix, payload):
+        """Queue a non-retained message on one of our own topics.
+
+        Diagnostics use this. It exists so nothing outside this module has to
+        reach for `_queue`, which is where the bounded-mailbox discipline lives
+        and is not something a caller should be choosing to bypass.
+        """
+        self._queue("%s/%s" % (self.spec.root(), suffix), payload, False)
+
     def publish_slot(self, name, payload):
         self._queue("%s/slot/%s" % (self.spec.root(), name), payload, True)
 

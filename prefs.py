@@ -29,8 +29,6 @@ KIND_CHOICE = "choice"      # cycles in place, no dialog
 KIND_ACTION = "action"      # the app decides
 KIND_GROUP = "group"        # descends a level
 
-BACK = "back"
-
 ROTATION_LABELS = ("top", "+60", "+120", "bottom", "+240", "+300")
 
 

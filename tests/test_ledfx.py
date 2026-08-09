@@ -424,3 +424,73 @@ class TestHardwareWrite(unittest.TestCase):
         before = strip.writes
         engine.render(T0 + 50)
         self.assertEqual(strip.writes, before, "wrote an identical frame")
+
+
+class TestPromisedBehaviour(unittest.TestCase):
+    """Two things the documentation promised and the code did not do.
+
+    Found by looking for constants nothing referenced: `P_BRIGHT` was packed
+    into every layer's params and never read, and `FADE_OUT_MS` had existed
+    since M1 without a single caller. Both are documented in README.md and
+    docs/protocol.md, which makes them defects rather than missing features.
+    """
+
+    def raw(self, brightness):
+        return {"segment": "edge:0", "effect": "solid", "rgb": (200, 200, 200),
+                "speed": 128, "intensity": 128, "brightness": brightness,
+                "ttl": 60}
+
+    def test_a_led_payloads_brightness_is_applied(self):
+        dim = LedEngine(PROFILE, {"brightness": 255})
+        dim.set_raw(self.raw(64), T0)
+        dim.render(T0)
+        bright = LedEngine(PROFILE, {"brightness": 255})
+        bright.set_raw(self.raw(255), T0)
+        bright.render(T0)
+        self.assertLess(max(dim.frame()), max(bright.frame()))
+
+    def test_brightness_does_not_escape_the_global_ceiling(self):
+        # Per-layer brightness dims; it must never be able to brighten past the
+        # ceiling the user set.
+        engine = LedEngine(PROFILE, {"brightness": 100})
+        engine.set_raw(self.raw(255), T0)
+        engine.render(T0)
+        self.assertLessEqual(max(engine.frame()), 100)
+
+    def test_a_cleared_edge_fades_rather_than_snapping_dark(self):
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        engine.set_state(0, "done", 0, T0)      # green, solid
+        engine.render(T0)
+        lit = max(engine.frame())
+        self.assertGreater(lit, 0)
+
+        engine.clear_state(0, T0)
+        engine.render(T0 + 1)
+        just_after = max(engine.frame())
+        self.assertGreater(just_after, 0, "went black immediately")
+
+        engine.render(T0 + ledfx.FADE_OUT_MS // 2)
+        halfway = max(engine.frame())
+        self.assertLess(halfway, lit)
+        self.assertGreater(halfway, 0)
+
+        engine.render(T0 + ledfx.FADE_OUT_MS + 1)
+        self.assertEqual(max(engine.frame()), 0, "never finished fading")
+
+    def test_a_slot_returning_mid_fade_replaces_it(self):
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        engine.set_state(0, "done", 0, T0)
+        engine.render(T0)
+        engine.clear_state(0, T0)
+        engine.render(T0 + 500)
+        engine.set_state(0, "error", 0, T0 + 600)
+        engine.render(T0 + 600)
+        # Full brightness again, not whatever the fade had reached.
+        engine.render(T0 + 4000)
+        self.assertGreater(max(engine.frame()), 0)
+
+    def test_clearing_an_empty_edge_does_nothing(self):
+        engine = LedEngine(PROFILE, {"brightness": 255})
+        engine.clear_state(3, T0)
+        engine.render(T0)
+        self.assertEqual(max(engine.frame()), 0)

@@ -42,7 +42,7 @@ def _off_pattern():
         return None
 
 
-VERSION = "0.9.1"
+VERSION = "0.10.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -60,7 +60,6 @@ STARTUP_GRACE_MS = 400
 # element is a timer that ticks once a second, and ctx rasterisation is the most
 # expensive thing this app does.
 LED_INTERVAL_MS = 50
-SCREEN_INTERVAL_MS = 200
 IDLE_REDRAW_MS = 1000
 # How long the board stays empty before the ring goes back to the OS. Taking it
 # back is immediate; giving it away waits, so a slot that expires and returns
@@ -549,7 +548,7 @@ class EdgewiseApp(app.App):
             name = self.layout.slot_at(edge)
             slot = self.board.slots.get(name) if name else None
             if slot is None:
-                self.engine.clear_state(edge)
+                self.engine.clear_state(edge, now)
             else:
                 self.engine.set_state(edge, slot.state, slot.age_ms(now), now,
                                       slot.is_stale(now))
@@ -587,7 +586,7 @@ class EdgewiseApp(app.App):
         engine = self.engine
         engine.clear_raw()
         for edge in range(layout_mod.EDGES):
-            engine.clear_state(edge)
+            engine.clear_state(edge, now)
         if self._cal_mode == views.CalibrateView.MODE_PHASE:
             groups = boards.edge_leds(self.profile.led_count, self._cal_phase)
             engine.set_raw({"segment": None, "leds": list(groups[0]),
@@ -1042,7 +1041,7 @@ class EdgewiseApp(app.App):
             loops, renders, worst, free, len(self.board.slots),
             self.link.dropped_in, engine.path(), self.profile.led_count,
             self.profile.led_offset, compose_ms, write_ms, phases)
-        self.link._queue(self.link.spec.root() + "/stats", payload.encode(), False)
+        self.link.publish_status("stats", payload.encode())
 
     def _wall_clock(self):
         # 0 when the badge has never reached NTP, rather than a 1970 timestamp
@@ -1157,7 +1156,7 @@ class EdgewiseApp(app.App):
         if self._cal_index < self.profile.led_count:
             self._dirty = True
             return
-        if boards._valid_map(self._cal_map, self.profile.led_count):
+        if boards.valid_map(self._cal_map, self.profile.led_count):
             self.cfg["board_map"] = [list(g) for g in self._cal_map]
             C.save(self.cfg)
             self._reload_profile()

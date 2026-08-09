@@ -59,7 +59,16 @@ ACTION=$(printf '%s' "$INPUT" | jq -r '
 
 PROJECT=${CLAUDE_PROJECT_DIR:-$(printf '%s' "$INPUT" | jq -r '.cwd // empty')}
 [ -n "$PROJECT" ] || PROJECT=$PWD
-SLOT=$(basename "$PROJECT" | tr '[:upper:]' '[:lower:]' | tr '/#+ ' '----' | cut -c1-16)
+# Allowlist, not denylist. This name is interpolated into a match pattern
+# below, and it comes from a directory name: "my.project" would make "." match
+# any character, and "a|b" would create an alternation that accepts an ack
+# meant for a different slot. In the flow that turns a tap into permission to
+# run a command, that is not a theoretical concern.
+SLOT=$(basename "$PROJECT" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9._-]/-/g' \
+    | cut -c1-16)
+[ -n "$SLOT" ] || bail "could not derive a slot name from $PROJECT"
 [ "${EDGEWISE_LABELS:-name}" = "hash" ] && bail "approve flow needs readable slot names"
 
 # Ask.
@@ -74,8 +83,11 @@ set -- -h "$EDGEWISE_BROKER" -p "$EDGEWISE_PORT" -t "$ROOT" -W "$EDGEWISE_APPROV
 [ -n "${EDGEWISE_PASS:-}" ] && set -- "$@" -P "$EDGEWISE_PASS"
 [ "$EDGEWISE_TLS" = "1" ] && set -- "$@" --capath /etc/ssl/certs
 
+# grep -F: fixed strings, no pattern language at all. Even with the allowlist
+# above, a decision this consequential should not be one metacharacter away
+# from matching an ack that was never meant for it.
 EVENT=$(mosquitto_sub "$@" 2>/dev/null \
-    | grep -m1 -E "\"type\":\"(ack|deny)\",\"slot\":\"$SLOT\"" || true)
+    | grep -m1 -F "\"slot\":\"$SLOT\"" || true)
 
 case "$EVENT" in
 *'"type":"ack"'*)

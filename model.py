@@ -51,7 +51,6 @@ REBUILD_WINDOW_MS = 3000
 
 ORIGIN_MQTT = "mqtt"
 ORIGIN_DEMO = "demo"
-ORIGIN_LOCAL = "local"
 
 # What `apply()` reports back, so the caller knows whether the change is worth
 # the cost of a re-layout.

@@ -54,23 +54,23 @@ class TestCalibratedMap(unittest.TestCase):
     GOOD = ((0, 1), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11))
 
     def test_accepts_a_complete_map(self):
-        self.assertTrue(boards._valid_map(self.GOOD, 12))
+        self.assertTrue(boards.valid_map(self.GOOD, 12))
 
     def test_rejects_a_map_with_a_duplicate_led(self):
         bad = ((0, 1), (1, 3), (4, 5), (6, 7), (8, 9), (10, 11))
-        self.assertFalse(boards._valid_map(bad, 12))
+        self.assertFalse(boards.valid_map(bad, 12))
 
     def test_rejects_an_out_of_range_index(self):
         bad = ((0, 99), (2, 3), (4, 5), (6, 7), (8, 9), (10, 11))
-        self.assertFalse(boards._valid_map(bad, 12))
+        self.assertFalse(boards.valid_map(bad, 12))
 
     def test_rejects_the_wrong_number_of_edges(self):
-        self.assertFalse(boards._valid_map(self.GOOD[:5], 12))
+        self.assertFalse(boards.valid_map(self.GOOD[:5], 12))
 
     def test_rejects_junk(self):
         for bad in (None, {}, "0123", [[], [], [], [], [], []], [[True]] * 6):
             with self.subTest(value=bad):
-                self.assertFalse(boards._valid_map(bad, 12))
+                self.assertFalse(boards.valid_map(bad, 12))
 
     def test_rotation_applies_to_a_calibrated_map(self):
         turned = rotate_map(self.GOOD, 1)

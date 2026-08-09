@@ -367,6 +367,8 @@ class LedEngine:
         self._semantic = [None] * len(profile.edge_leds)
         self._raw = [None] * len(profile.edge_leds)
         self._ring_raw = None
+        # An edge that has just been cleared, and when: (layer, started_ms).
+        self._fade = [None] * len(profile.edge_leds)
         self._edge_ceiling = bytearray(len(profile.edge_leds))
         self.brightness = 180
         self.night_level = 255
@@ -402,8 +404,27 @@ class LedEngine:
         self._semantic[edge] = Layer(
             EFFECTS[name], params(rgb, speed=speed), now_ms - age_ms)
 
-    def clear_state(self, edge):
+    def clear_state(self, edge, now_ms=None):
+        """Drop an edge's state, fading rather than snapping to black.
+
+        README, docs/protocol.md and the spec all promise a two-second fade on
+        clear. FADE_OUT_MS has existed since M1 and nothing used it: an edge
+        that was lit one frame was simply dark the next.
+
+        The fade reuses the layer that was already there, so it costs no new
+        allocation and keeps the colour it is fading from -- which is the point.
+        A slot that comes back mid-fade replaces it outright.
+        """
+        layer = self._semantic[edge]
+        if layer is None:
+            return
         self._semantic[edge] = None
+        if self._fade[edge] is None:
+            # Time comes from the caller, like every other entry point here. A
+            # fade that started on clock.now_ms() and is measured against the
+            # now_ms passed to render() is comparing two unrelated clocks --
+            # the exact mistake mqtt_link has a comment about.
+            self._fade[edge] = (layer, clock.now_ms() if now_ms is None else now_ms)
 
     def set_raw(self, spec, now_ms):
         """Apply a validated `led` payload.
@@ -457,8 +478,27 @@ class LedEngine:
             if layer is None:
                 layer = self._semantic[edge]
             if layer is None:
-                continue
+                faded = self._fade[edge]
+                if faded is None:
+                    continue
+                layer, started = faded
+                gone = clock.elapsed_ms(started, now_ms)
+                if gone >= FADE_OUT_MS:
+                    self._fade[edge] = None
+                    continue
+                fade_level = 255 - (gone * 255) // FADE_OUT_MS
+            else:
+                self._fade[edge] = None
+                fade_level = 255
             layer.fx(buf, seg, clock.elapsed_ms(layer.t0_ms, now_ms), layer.params)
+            # The layer's own brightness. `led` payloads have carried this since
+            # M2 and docs/protocol.md documents it; params() packed it at
+            # P_BRIGHT and nothing ever read it, so setting it did nothing.
+            level = layer.params[P_BRIGHT]
+            if level < 255:
+                self._dim_segment(buf, seg, level)
+            if fade_level < 255:
+                self._dim_segment(buf, seg, fade_level)
             if transitions is not None:
                 level = transitions(edge)
                 if level < 255:

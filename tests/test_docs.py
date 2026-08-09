@@ -229,6 +229,36 @@ class TestAdapters(unittest.TestCase):
             self.assertIn(state, tuple(model.STATES) + (model.STATE_CLEAR,))
 
 
+class TestControlsMatchTheCode(unittest.TestCase):
+    """controls.md calls itself the single source of truth for input, and says
+    that if it and the code disagree the code is wrong. That was untrue for
+    LEFT, which the table promised opened settings while `app.py` had no
+    handler for it at all -- so the one screen the badge could not reach was
+    also the one every setup instruction pointed at."""
+
+    BUTTONS = ("UP", "DOWN", "LEFT", "RIGHT", "CONFIRM", "CANCEL")
+
+    def setUp(self):
+        self.controls = read(os.path.join(ROOT, "controls.md"))
+        self.app = read(os.path.join(ROOT, "app.py"))
+
+    def test_every_button_the_table_promises_is_handled(self):
+        missing = []
+        for button in self.BUTTONS:
+            if button not in self.controls:
+                continue
+            if '_pressed("%s")' % button not in self.app:
+                missing.append(button)
+        self.assertEqual(missing, [], "documented in controls.md, no handler")
+
+    def test_settings_is_reachable(self):
+        self.assertIn("SCREEN_SETTINGS", self.app)
+        # Declared-but-never-used is exactly how this went unnoticed: the
+        # constant existed from M0 and nothing ever assigned it.
+        self.assertGreater(self.app.count("SCREEN_SETTINGS"), 1,
+                           "SCREEN_SETTINGS is declared but never used")
+
+
 class TestRepositoryDeliverables(unittest.TestCase):
     """Spec S13 lists these by name. Their absence is the failure mode where
     everything works and nobody can use it."""

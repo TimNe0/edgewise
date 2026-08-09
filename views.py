@@ -213,6 +213,62 @@ class PickerView:
         r.text("in settings", 0, 88, (0.4, 0.4, 0.44), size=10, align="center")
 
 
+class SettingsView:
+    """The settings list. Values live on the right, so a column of them can be
+    read at a glance without entering anything."""
+
+    ROWS = 5
+
+    def draw(self, r, model, hint=""):
+        r.clear(BG)
+        r.text(model.title(), 0, -88, ACCENT, size=13, align="center")
+
+        items = model.items()
+        # Scroll so the cursor is never against an edge unless the list ends
+        # there; a highlighted row with no context above it reads as the top of
+        # the list even when it is the middle.
+        first = max(0, min(model.index - self.ROWS // 2, len(items) - self.ROWS))
+        for row, item in enumerate(items[first:first + self.ROWS]):
+            index = first + row
+            y = -50 + row * 24
+            selected = index == model.index
+            colour = ACCENT if selected else FG
+            r.text(item.label, -74, y, colour, size=13, align="left")
+            summary = model.summary(item)
+            if summary:
+                r.text(summary, 78, y, ACCENT if selected else DIM,
+                       size=12, align="right")
+            elif item.kind == "group":
+                r.text(">", 78, y, colour, size=12, align="right")
+
+        if len(items) > self.ROWS:
+            r.text("%d/%d" % (model.index + 1, len(items)), 0, 78,
+                   (0.35, 0.35, 0.38), size=9, align="center")
+        r.text(hint or "CONFIRM select   CANCEL back", 0, 92,
+               (0.4, 0.4, 0.44), size=9, align="center")
+
+
+class DeviceIdView:
+    """The full device ID, which is the one thing a publisher cannot guess.
+
+    Shown in two halves: 26 base32 characters on one line at a legible size do
+    not fit a 240-pixel round screen, and this is a string people type."""
+
+    def draw(self, r, device_id, prefix):
+        r.clear(BG)
+        r.text("device id", 0, -84, ACCENT, size=13, align="center")
+        r.text(device_id[:13], 0, -52, FG, size=15, align="center")
+        r.text(device_id[13:], 0, -32, FG, size=15, align="center")
+        r.text("topic", 0, 2, (0.4, 0.4, 0.44), size=10, align="center")
+        r.text("%s/<id>/slot/<name>" % prefix, 0, 18, DIM, size=10,
+               align="center")
+        r.text("anyone who knows this", 0, 52, (0.4, 0.4, 0.44), size=9,
+               align="center")
+        r.text("can write to your lights", 0, 64, (0.4, 0.4, 0.44), size=9,
+               align="center")
+        r.text("CANCEL back", 0, 92, (0.4, 0.4, 0.44), size=9, align="center")
+
+
 class MessageView:
     """A short `text` message from the broker, over the dashboard."""
 

@@ -20,11 +20,12 @@ from system.eventbus import eventbus
 from system.patterndisplay.events import PatternDisable, PatternEnable
 
 from . import boards, clock, conf as C, demo as demo_mod, gestures as gest
+from . import prefs
 from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as touch_mod
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -32,6 +33,7 @@ SCREEN_SETTINGS = 2
 SCREEN_CALIBRATE = 3
 SCREEN_PICKER = 4
 SCREEN_DEMO = 5
+SCREEN_DEVICE = 6
 
 # Ignore button state briefly after launch, so the press that opened the app is
 # not read as a command.
@@ -66,6 +68,13 @@ class EdgewiseApp(app.App):
         self.picker = views.PickerView()
         self.messages = views.MessageView()
         self.demo = demo_mod.Demo(self.board)
+        self.settings_view = views.SettingsView()
+        self.device_view = views.DeviceIdView()
+        self.prefs = prefs.SettingsModel(self.cfg)
+        # Set by the button handler, consumed by the async loop. Buttons are
+        # handled synchronously and a platform dialog has to be awaited, so the
+        # two cannot meet directly.
+        self._pending = None
 
         # Two hardware sources, one recogniser: pads on a 2026 badge, the
         # highlighted edge plus CONFIRM on a 2024 one. Both absent is fine --
@@ -261,6 +270,11 @@ class EdgewiseApp(app.App):
             self._since_draw_ms += delta
             self.update(delta)
 
+            if self._pending is not None:
+                item, self._pending = self._pending, None
+                await self._edit(item, render_update)
+                continue
+
             if not getattr(self, "_foreground", True):
                 # render_update blocks until the app is on screen again.
                 if await render_update():
@@ -269,6 +283,53 @@ class EdgewiseApp(app.App):
                 await self._render(render_update)
             else:
                 await asyncio.sleep(0.02)
+
+    async def _edit(self, item, render_update):
+        """Run one platform dialog and apply its result.
+
+        `TextDialog` and friends come from `app_components`, so this is the same
+        text entry every other app on the badge uses -- which also means a
+        keyboard hexpansion works here for free, and the screen-reader alt text
+        comes with it. A hand-rolled character picker would have been a worse
+        version of all three.
+
+        A modal dialog suspends this loop, and that is safe: the MQTT worker
+        owns its own thread, so retained messages keep arriving while you type.
+        On a build with no threads the link is polled from here and does stall
+        for as long as the dialog is open, which is a fair price for the only
+        screen where nothing is being watched.
+        """
+        try:
+            from app_components.dialog import NumberDialog, TextDialog, YesNoDialog
+        except ImportError:      # pragma: no cover - desktop tests, no firmware
+            return
+
+        if item.key == "regenerate":
+            confirm = YesNoDialog("New device ID?", self)
+            if await confirm.run(render_update):
+                self.prefs.cfg = prefs.put(
+                    self.cfg, "device_id", security.new_device_id())
+                self._commit_settings(item)
+                self.notification = Notification("New device ID")
+            self._dirty = True
+            return
+
+        current = prefs.get(self.cfg, item.key)
+        prompt = item.label
+        if item.kind == prefs.KIND_NUMBER:
+            dialog = NumberDialog(prompt, self)
+        else:
+            dialog = TextDialog(prompt, self,
+                                masked=item.kind == prefs.KIND_PASSWORD)
+        # Seeded with the current value so correcting one character of a
+        # hostname is not the same work as typing it from nothing.
+        if current not in (None, "") and item.kind != prefs.KIND_PASSWORD:
+            dialog.text = str(current)
+
+        result = await dialog.run(render_update)
+        if self.prefs.apply(item, result):
+            self._commit_settings(item)
+        self._dirty = True
 
     async def _render(self, render_update):
         self._dirty = False
@@ -387,6 +448,10 @@ class EdgewiseApp(app.App):
             self.link_state, self.demo.caption, self.demo.showing_qr,
             self._cal_mode, self._cal_index, self._cal_phase,
             self._picker_index,
+            # Moving the cursor changes nothing else in this tuple, so without
+            # these the settings list would not repaint until something
+            # unrelated happened to it.
+            self.prefs.group, self.prefs.index,
         )
 
     def _needs_draw(self):
@@ -407,6 +472,13 @@ class EdgewiseApp(app.App):
 
         if self.screen == SCREEN_PICKER:
             self.picker.draw(r, self._picker_options, self._picker_index)
+        elif self.screen == SCREEN_SETTINGS:
+            self.settings_view.draw(
+                r, self.prefs,
+                "set a broker to begin" if self.prefs.needs_broker() else "")
+        elif self.screen == SCREEN_DEVICE:
+            self.device_view.draw(r, self.cfg["device_id"],
+                                  self.cfg["broker"]["prefix"])
         elif self.screen == SCREEN_CALIBRATE:
             self.calibrator.draw(r, self._cal_mode, self._cal_index,
                                  self.profile.led_count, self._cal_phase)
@@ -426,6 +498,10 @@ class EdgewiseApp(app.App):
 
         if self.notification is not None:
             self.notification.draw(ctx)
+
+        # Last, and never conditionally: a platform dialog is an overlay, and
+        # without this it opens, takes every button, and draws nothing at all.
+        self.draw_overlays(ctx)
 
     def _demo_caption(self, r):
         r.text(self.demo.caption, 0, 62, views.FG, size=13, align="center")
@@ -478,7 +554,21 @@ class EdgewiseApp(app.App):
                 self.screen = SCREEN_DASH
                 self._dirty = True
             return
+        if self.screen == SCREEN_SETTINGS:
+            return self._settings_buttons()
+        if self.screen == SCREEN_DEVICE:
+            if self._pressed("CANCEL") or self._pressed("LEFT"):
+                self.screen = SCREEN_SETTINGS
+                self._dirty = True
+            return
 
+        if self._pressed("LEFT"):
+            # controls.md has documented this since M3. Until now it was the
+            # only line in that table with no code behind it.
+            self.prefs = prefs.SettingsModel(self.cfg)
+            self.screen = SCREEN_SETTINGS
+            self._dirty = True
+            return
         if self._pressed("CANCEL"):
             if self.selected_edge is not None:
                 self.selected_edge = None
@@ -508,6 +598,74 @@ class EdgewiseApp(app.App):
         elif "CONFIRM" not in self._held and self._confirm_was_down:
             self.gestures.release(self.selected_edge, clock.now_ms())
         self._confirm_was_down = "CONFIRM" in self._held
+
+    # -- settings -------------------------------------------------------------
+
+    def _settings_buttons(self):
+        if self._pressed("CANCEL") or self._pressed("LEFT"):
+            if self.prefs.back():
+                self.screen = SCREEN_DASH
+            self._dirty = True
+            return
+        if self._pressed("UP"):
+            self.prefs.move(-1)
+            self._dirty = True
+            return
+        if self._pressed("DOWN"):
+            self.prefs.move(1)
+            self._dirty = True
+            return
+        if not self._pressed("CONFIRM") and not self._pressed("RIGHT"):
+            return
+
+        kind, item = self.prefs.select()
+        self._dirty = True
+        if kind in (None, prefs.KIND_GROUP):
+            return
+        if kind in (prefs.KIND_TOGGLE, prefs.KIND_CHOICE):
+            self._commit_settings(item)
+            return
+        if kind == prefs.KIND_ACTION:
+            self._settings_action(item)
+            return
+        # Text, password and number all need a platform dialog, which only the
+        # async loop can await.
+        self._pending = item
+
+    def _settings_action(self, item):
+        if item.key == "device_id":
+            self.screen = SCREEN_DEVICE
+        elif item.key == "regenerate":
+            self._pending = item          # confirmed with a YesNoDialog first
+        elif item.key == "calibrate":
+            # The calibrate screen has existed since M0 with nothing calling it.
+            self.open_calibration()
+        elif item.key == "replay_demo":
+            self.cfg["seen_demo"] = False
+            C.save(self.cfg)
+            self._start_demo()
+        elif item.key in ("version", "repo"):
+            self.notification = Notification("edgewise %s" % VERSION)
+
+    def _commit_settings(self, item=None):
+        """Persist an edit and apply whatever it changed, immediately.
+
+        Settings that only take effect on restart are settings people believe
+        are broken, so every one of these is applied in place: the ring changes
+        brightness as you hold DOWN, and a corrected broker reconnects before
+        you have left the screen.
+        """
+        self.cfg = self.prefs.cfg
+        C.save(self.cfg)
+        key = item.key if item is not None else ""
+        if key in ("board", "rotation"):
+            self._reload_profile()
+            self.pads = gest.PadReader(self.profile)
+        elif key.startswith("broker.") or key == "device_id":
+            self._open_link()
+        self.engine.brightness = self.cfg["brightness"]
+        self.engine.palette = self.cfg["palette"]
+        self._dirty = True
 
     # -- touch, gestures, flip ------------------------------------------------
 

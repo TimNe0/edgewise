@@ -24,6 +24,27 @@ CONFIRM. Both feed one recogniser, so the timings are identical.
 |---|---|
 | CANCEL / LEFT | back to the dashboard |
 
+## Settings
+
+Reached with LEFT from the dashboard. Two levels: a list of groups, then the
+items in one group.
+
+| Input | Does |
+|---|---|
+| UP / DOWN | move the cursor; it wraps |
+| CONFIRM / RIGHT | open a group, or edit the item |
+| CANCEL / LEFT | back a level, then out to the dashboard |
+
+Toggles and choices change in place, with no dialog. Anything you have to type
+opens the badge's own text dialog — the same one the app store and every other
+app uses, which is why a keyboard hexpansion works here without Edgewise
+knowing it exists. CANCEL in that dialog leaves the old value alone; confirming
+an empty field really does clear it.
+
+Every change is saved and applied the moment it is made. Nothing waits for a
+restart, because a setting that appears to do nothing is a setting people
+assume is broken.
+
 ## Calibration
 
 Reached from settings. Answers which LEDs make up an edge, which no firmware

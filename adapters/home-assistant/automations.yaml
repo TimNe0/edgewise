@@ -130,3 +130,38 @@
       data:
         title: "Edgewise"
         message: "The badge has gone offline."
+
+# The middle of the badge, when nothing needs you. HA already knows the weather;
+# the badge has no HTTP client and never fetches anything itself.
+#
+# Retained, so the badge still knows it after a reboot, with a TTL so it cannot
+# believe it forever -- weather half a day stale is misinformation with an icon.
+#
+# HA's condition names are close to the badge's but not identical, hence the
+# mapping. Anything unmapped is dropped rather than guessed at, and the
+# temperature still shows.
+- id: edgewise_weather
+  alias: "Edgewise: weather"
+  trigger:
+    - platform: state
+      entity_id: weather.home
+    - platform: time_pattern
+      minutes: "/30"
+  action:
+    - service: mqtt.publish
+      data:
+        topic: "edgewise/YOUR_DEVICE_ID/weather"
+        retain: true
+        payload: >-
+          {% set map = {
+               'sunny': 'clear', 'clear-night': 'clear',
+               'partlycloudy': 'part', 'cloudy': 'cloud', 'fog': 'fog',
+               'rainy': 'rain', 'pouring': 'rain', 'hail': 'rain',
+               'snowy': 'snow', 'snowy-rainy': 'snow',
+               'lightning': 'storm', 'lightning-rainy': 'storm',
+               'windy': 'wind', 'windy-variant': 'wind' } %}
+          {"cond":"{{ map.get(states('weather.home'), 'cloud') }}",
+           "temp":{{ state_attr('weather.home', 'temperature') | round(0) }},
+           "rain":{{ state_attr('weather.home', 'precipitation_probability')
+                     | default(0) | round(0) }},
+           "ttl":5400}

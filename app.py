@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -102,6 +102,11 @@ class EdgewiseApp(app.App):
         self._flood_notice_ms = 0
         self.message = None
         self.message_until_ms = 0
+        # Weather for the middle of the dashboard. The badge fetches
+        # nothing itself: this arrives over MQTT from whatever already
+        # knows, like everything else here.
+        self.weather = None
+        self.weather_until_ms = 0
 
         self.screen = SCREEN_DASH
         self.selected_edge = None
@@ -218,6 +223,8 @@ class EdgewiseApp(app.App):
                     self.engine.set_raw(spec, now)
             elif kind == "text":
                 self._show_message(security.parse_text(payload), now)
+            elif kind == "weather":
+                self._show_weather(security.parse_weather(payload), now)
 
     def _apply_slot(self, name, payload, now):
         name = security.clean_text(name, 24)
@@ -228,6 +235,19 @@ class EdgewiseApp(app.App):
             return
         if self.board.apply(name, parsed, now) != model.CHANGE_NONE:
             self._dirty = True
+
+    def _show_weather(self, parsed, now):
+        """Retained, so it survives a reboot -- and expiring, so it cannot
+        outlive its usefulness. Weather half a day stale is not weather, it is
+        misinformation with an icon on it."""
+        if parsed is None:
+            return
+        if parsed.get("cleared"):
+            self.weather = None
+        else:
+            self.weather = parsed
+            self.weather_until_ms = clock.add_ms(now, parsed["ttl"] * 1000)
+        self._dirty = True
 
     def _show_message(self, parsed, now):
         if not parsed:
@@ -357,6 +377,9 @@ class EdgewiseApp(app.App):
         if self.screen == SCREEN_DEMO and self.demo.tick(now):
             self._dirty = True
 
+        if self.weather is not None and clock.expired(self.weather_until_ms, now):
+            self.weather = None
+            self._dirty = True
         if self.message is not None and clock.expired(self.message_until_ms, now):
             self.message = None
             self._dirty = True
@@ -459,6 +482,8 @@ class EdgewiseApp(app.App):
             # these the settings list would not repaint until something
             # unrelated happened to it.
             self.prefs.group, self.prefs.index,
+            self._hhmm(), self.weather and tuple(sorted(
+                (k, v) for k, v in self.weather.items())),
         )
 
     def _needs_draw(self):
@@ -497,7 +522,7 @@ class EdgewiseApp(app.App):
         else:
             self.dashboard.draw(r, self.board, self.layout, self.engine, now,
                                 views.link_summary(self.link_state, self.cfg),
-                                self.cfg, self._hhmm())
+                                self.cfg, self._hhmm(), self.weather)
             if self.screen == SCREEN_DEMO and self.demo.caption:
                 self._demo_caption(r)
             elif self.message is not None:

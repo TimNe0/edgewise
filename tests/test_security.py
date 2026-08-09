@@ -200,3 +200,72 @@ class TestDeviceId(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParseWeather(unittest.TestCase):
+    """The centre of the dashboard, which is the part a stranger on a public
+    broker would most enjoy writing to."""
+
+    def test_a_full_payload(self):
+        parsed = security.parse_weather(
+            b'{"cond":"rain","temp":12,"rain":40,"ttl":3600}')
+        self.assertEqual(parsed["cond"], "rain")
+        self.assertEqual(parsed["temp"], 12)
+        self.assertEqual(parsed["rain"], 40)
+        self.assertEqual(parsed["ttl"], 3600)
+        self.assertEqual(parsed["unit"], "C")
+
+    def test_every_field_is_optional(self):
+        # A publisher that only knows the temperature should not have to invent
+        # a condition to satisfy the schema.
+        parsed = security.parse_weather(b'{"temp":7}')
+        self.assertEqual(parsed["temp"], 7)
+        self.assertNotIn("cond", parsed)
+        self.assertNotIn("rain", parsed)
+
+    def test_a_payload_saying_nothing_is_ignored(self):
+        # Not "empty weather": blanking the display because someone published
+        # {} would be a worse outcome than doing nothing.
+        self.assertIsNone(security.parse_weather(b'{"unit":"F"}'))
+
+    def test_an_empty_payload_clears_it(self):
+        self.assertEqual(security.parse_weather(b""), {"cleared": True})
+
+    def test_an_unknown_condition_is_dropped_not_guessed(self):
+        parsed = security.parse_weather(b'{"cond":"plague","temp":9}')
+        self.assertNotIn("cond", parsed)
+        self.assertEqual(parsed["temp"], 9)
+
+    def test_impossible_temperatures_are_refused(self):
+        self.assertIsNone(security.parse_weather(b'{"temp":5000}'))
+        self.assertIsNone(security.parse_weather(b'{"temp":-273}'))
+
+    def test_chance_of_rain_is_a_percentage(self):
+        self.assertIsNone(security.parse_weather(b'{"rain":140}'))
+        self.assertEqual(security.parse_weather(b'{"rain":0}')["rain"], 0)
+        self.assertEqual(security.parse_weather(b'{"rain":100}')["rain"], 100)
+
+    def test_fahrenheit_is_allowed_anything_else_is_not(self):
+        self.assertEqual(
+            security.parse_weather(b'{"temp":54,"unit":"F"}')["unit"], "F")
+        self.assertEqual(
+            security.parse_weather(b'{"temp":54,"unit":"K"}')["unit"], "C")
+
+    def test_ttl_defaults_and_is_capped(self):
+        self.assertEqual(security.parse_weather(b'{"temp":1}')["ttl"],
+                         security.DEFAULT_WEATHER_TTL_S)
+        self.assertEqual(
+            security.parse_weather(b'{"temp":1,"ttl":999999}')["ttl"],
+            security.DEFAULT_WEATHER_TTL_S)
+
+    def test_junk_never_raises(self):
+        for payload in (b"", b"{", b"[]", b'"weather"', b"null", b'{"temp":"hot"}',
+                        b'{"cond":123}', b"\xff\xfe", b"{" * 200):
+            try:
+                security.parse_weather(payload)
+            except Exception as exc:  # noqa: BLE001
+                self.fail("%r raised %s" % (payload[:20], exc))
+
+    def test_oversize_is_refused_before_parsing(self):
+        self.assertIsNone(
+            security.parse_weather(b'{"temp":1,"x":"' + b"a" * 600 + b'"}'))

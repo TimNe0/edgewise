@@ -252,7 +252,7 @@ class Link:
             client.set_last_will(self.spec.root() + "/availability",
                                  b"offline", retain=True, qos=QOS)
             client.connect()
-            for suffix in ("slot/+", "led", "text"):
+            for suffix in ("slot/+", "led", "text", "weather"):
                 client.subscribe(("%s/%s" % (self.spec.root(), suffix)).encode())
             client.publish((self.spec.root() + "/availability").encode(),
                            b"online", retain=True, qos=QOS)
@@ -351,7 +351,7 @@ def route(suffix):
         if name and "/" not in name:
             return ("slot", name)
         return (None, None)
-    if suffix in ("led", "text"):
+    if suffix in ("led", "text", "weather"):
         return (suffix, None)
     return (None, None)
 

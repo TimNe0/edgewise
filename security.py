@@ -28,6 +28,18 @@ TEXT_LEVELS = ("info", "alert")
 MAX_TEXT_DURATION_S = 300
 DEFAULT_TEXT_DURATION_S = 30
 
+# Weather, for the middle of the dashboard when nothing needs you. The badge
+# fetches nothing itself -- it has no HTTP client and non-MQTT transports are an
+# explicit non-goal -- so this arrives the same way everything else does, from
+# whatever already knows: Home Assistant, a cron job, the shell adapter.
+CONDITIONS = ("clear", "part", "cloud", "rain", "snow", "storm", "fog", "wind")
+TEMP_MIN = -99
+TEMP_MAX = 99
+# Three hours. Weather that is half a day stale is not weather, it is
+# misinformation with an icon, so it expires rather than sitting there.
+DEFAULT_WEATHER_TTL_S = 10800
+MAX_WEATHER_TTL_S = 86400
+
 # Raw LED control.
 EFFECTS = ("solid", "breathe", "blink", "chase", "comet", "sparkle", "rainbow", "wipe")
 MAX_LED_TTL_S = 3600
@@ -141,6 +153,51 @@ def parse_slot(raw):
 
     # Unknown fields are dropped by construction: nothing is copied across that
     # is not named above.
+    return out
+
+
+def parse_weather(raw):
+    """A `weather` payload. Returns a clean dict, or None to ignore.
+
+    Every field is optional. A publisher that only knows the temperature should
+    be able to say so and get a temperature, rather than having to invent a
+    condition to satisfy a schema.
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, bytearray)):
+        if len(raw) == 0:
+            # Same retained-clear idiom as a slot: an empty payload means "stop
+            # showing this", not "here is some empty weather".
+            return {"cleared": True}
+        if len(raw) > MAX_PAYLOAD:
+            return None
+        raw = _loads(raw)
+    if not isinstance(raw, dict):
+        return None
+
+    out = {}
+    cond = raw.get("cond")
+    if isinstance(cond, str) and cond in CONDITIONS:
+        out["cond"] = cond
+
+    temp = _as_int(raw.get("temp"), TEMP_MIN, TEMP_MAX)
+    if temp is not None:
+        out["temp"] = temp
+    unit = raw.get("unit")
+    out["unit"] = unit if unit in ("C", "F") else "C"
+
+    rain = _as_int(raw.get("rain"), 0, 100)
+    if rain is not None:
+        out["rain"] = rain
+
+    if not ("cond" in out or "temp" in out or "rain" in out):
+        # Nothing usable. Better to ignore it than to blank the display with a
+        # payload that said nothing.
+        return None
+
+    ttl = _as_int(raw.get("ttl"), 1, MAX_WEATHER_TTL_S)
+    out["ttl"] = DEFAULT_WEATHER_TTL_S if ttl is None else ttl
     return out
 
 

@@ -25,10 +25,11 @@ The root is `<prefix>/<device-id>/`.
 | `slot/<name>` | in | **yes, please** | a job's state (below) |
 | `led` | in | optional | raw segment + effect |
 | `text` | in | no | a short screen message |
+| `weather` | in | **yes, please** | the centre-of-screen weather |
 | `event` | out | never | taps, acks, denies, snooze |
 | `availability` | out | yes | `online` / `offline` |
 
-The badge subscribes to exactly `slot/+`, `led` and `text`. `slot/a/b` is not a
+The badge subscribes to exactly `slot/+`, `led`, `text` and `weather`. `slot/a/b` is not a
 slot named `a/b`, it is junk, and is ignored.
 
 ## Retained is the whole durability story
@@ -127,6 +128,44 @@ The [safety caps](#the-caps-are-not-negotiable) apply after this, always.
 `alert` also pulses the ring white once. Not retained — a message that
 reappeared every time the badge reconnected would be a nuisance, not a
 reminder.
+
+## `weather` — the middle of the screen
+
+At rest the dashboard centre shows a clock, and under it the weather, if
+anything has told it any. The moment a slot needs you, the count takes the whole
+centre back — the weather is what the badge does with the space it would
+otherwise waste.
+
+```json
+{"cond":"rain", "temp":12, "rain":40, "unit":"C", "ttl":10800}
+```
+
+| Field | Limit | Shown as |
+|---|---|---|
+| `cond` | one of the conditions below | a small icon |
+| `temp` | −99…99 | the number, a degree ring, and the unit |
+| `rain` | 0…100 | a raindrop and a percentage |
+| `unit` | `C` or `F`, default `C` | the letter after the temperature |
+| `ttl` | 1–86400 s, default 10800 | — |
+
+Conditions: `clear` `part` `cloud` `rain` `snow` `storm` `fog` `wind`. An
+unrecognised one is dropped rather than guessed at, and the other fields still
+show.
+
+**Every field is optional**, and any combination lays out sensibly. A publisher
+that only knows the temperature sends only the temperature, and gets a centred
+temperature rather than one parked where an icon would have been.
+
+**Retain it, and let it expire.** Retained so the badge still knows the weather
+after a reboot; a three-hour default TTL so it cannot outlive its usefulness.
+Weather half a day stale is not weather, it is misinformation with an icon on
+it. An empty retained payload removes it, exactly like a slot.
+
+**The badge fetches nothing itself.** It has no HTTP client, and non-MQTT
+transports are an explicit non-goal — so the weather comes from whatever
+already knows it, which is the same rule as everything else here. Home
+Assistant is one automation away; the shell adapter can publish from any API,
+on a machine that can keep an API key.
 
 ## `event` — what the badge sends back
 

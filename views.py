@@ -77,11 +77,11 @@ class Dashboard:
     """The default screen: six arcs, labels, and a count in the middle."""
 
     def draw(self, r, board, layout, engine, now_ms, link_state="", cfg=None,
-             hhmm=None):
+             hhmm=None, weather=None):
         r.clear(BG)
         self._arcs(r, layout, engine, now_ms)
         self._labels(r, board, layout, now_ms)
-        self._centre(r, board, now_ms, hhmm)
+        self._centre(r, board, now_ms, hhmm, weather)
         self._footer(r, link_state, cfg)
 
     def _arcs(self, r, layout, engine, now_ms):
@@ -111,7 +111,7 @@ class Dashboard:
                 age += " ?"
             r.text(age, x, y + 8, DIM, size=12, align="center")
 
-    def _centre(self, r, board, now_ms, hhmm=None):
+    def _centre(self, r, board, now_ms, hhmm=None, weather=None):
         needs, total = board.counts()
         if needs:
             # The clock gets out of the way entirely. Something needs you, and
@@ -121,11 +121,23 @@ class Dashboard:
                    0, 20, ACCENT, size=13, align="center")
             return
 
-        if hhmm:
+        if hhmm and weather:
+            # Both: clock up, weather under it, status line last. The clock
+            # moves up rather than shrinking -- a small clock is a clock nobody
+            # reads from a desk away.
+            r.text(hhmm, 0, -28, FG, size=34, align="center")
+            self._weather_row(r, weather, 6)
+            r.text("all clear" if total else "no jobs", 0, 36, DIM,
+                   size=10, align="center")
+        elif hhmm:
             # Big, because at rest this is a desk clock and it is being read
             # from across a room rather than at arm's length.
             r.text(hhmm, 0, -6, FG, size=38, align="center")
             r.text("all clear" if total else "no jobs", 0, 24, DIM,
+                   size=11, align="center")
+        elif weather:
+            self._weather_row(r, weather, -6)
+            r.text("all clear" if total else "no jobs", 0, 26, DIM,
                    size=11, align="center")
         elif total:
             # Deliberately calm. A board that shouts when nothing is wrong
@@ -134,6 +146,51 @@ class Dashboard:
         else:
             r.text("no jobs", 0, -4, DIM, size=15, align="center")
             r.text("waiting", 0, 14, DIM, size=11, align="center")
+
+    def _weather_row(self, r, weather, y):
+        """Condition, temperature, chance of rain -- icon then number.
+
+        Laid out by measuring, not by fixed columns: a publisher that sends only
+        a temperature should get a centred temperature, not a temperature parked
+        where an icon would have been. Every element is optional, and any
+        combination of the three has to look deliberate.
+        """
+        icon = 11
+        gap = 7
+        parts = []
+        if weather.get("cond"):
+            parts.append(("icon", icon * 2))
+        if weather.get("temp") is not None:
+            # The number, then a drawn ring, then the unit. Not "°": nothing in
+            # the firmware uses that character, so there is no evidence the font
+            # carries it, and a tofu box where the temperature should be is a
+            # poor way to find out.
+            text = "%d" % weather["temp"]
+            unit = weather.get("unit", "C")
+            parts.append(("temp",
+                          r.text_width(text, 15) + 5 + r.text_width(unit, 11),
+                          text, unit))
+        if weather.get("rain") is not None:
+            text = "%d%%" % weather["rain"]
+            parts.append((
+                "rain", icon + 3 + r.text_width(text, 13), text))
+        if not parts:
+            return
+
+        width = sum(p[1] for p in parts) + gap * (len(parts) - 1)
+        x = -width / 2.0
+        for part in parts:
+            if part[0] == "icon":
+                weather_icon(r, weather["cond"], x + icon, y, icon)
+            elif part[0] == "temp":
+                r.text(part[2], x, y + 5, FG, size=15, align="left")
+                after = x + r.text_width(part[2], 15)
+                r.circle(after + 3, y - 4, 2, FG, fill=False)
+                r.text(part[3], after + 6, y + 5, FG, size=11, align="left")
+            else:
+                raindrop(r, x + 5, y - 1, 6)
+                r.text(part[2], x + icon + 3, y + 5, DROP, size=13, align="left")
+            x += part[1] + gap
 
     def _footer(self, r, link_state, cfg):
         if link_state:
@@ -241,6 +298,84 @@ class PickerView:
         r.text("you can change this", 0, 74, (0.4, 0.4, 0.44), size=10,
                align="center")
         r.text("in settings", 0, 88, (0.4, 0.4, 0.44), size=10, align="center")
+
+
+SUN = (1.0, 0.78, 0.25)
+CLOUD = (0.62, 0.66, 0.72)
+DROP = (0.35, 0.68, 1.0)
+BOLT = (1.0, 0.85, 0.3)
+
+
+def _cloud(r, x, y, s, colour):
+    """A cloud as three overlapping discs on a bar.
+
+    Filled shapes rather than an outline: at this size a one-pixel stroke of a
+    cloud silhouette turns to mush, while a solid blob still reads as a cloud
+    from across a desk, which is the whole point of the thing.
+    """
+    r.circle(x - s * 0.42, y + s * 0.12, s * 0.36, colour, fill=True)
+    r.circle(x + s * 0.36, y + s * 0.16, s * 0.32, colour, fill=True)
+    r.circle(x - s * 0.02, y - s * 0.14, s * 0.46, colour, fill=True)
+    r.poly(((x - s * 0.78, y + s * 0.12), (x + s * 0.7, y + s * 0.12),
+            (x + s * 0.7, y + s * 0.48), (x - s * 0.78, y + s * 0.48)),
+           colour, fill=True)
+
+
+def _sun(r, x, y, s, colour=SUN, rays=True):
+    r.circle(x, y, s * 0.42, colour, fill=True)
+    if not rays:
+        return
+    import math
+
+    for i in range(8):
+        angle = i * math.pi / 4.0
+        dx, dy = math.cos(angle), math.sin(angle)
+        r.line(x + dx * s * 0.62, y + dy * s * 0.62,
+               x + dx * s * 0.92, y + dy * s * 0.92, colour, 2)
+
+
+def weather_icon(r, cond, x, y, s=11):
+    """One small glyph for a condition. Nothing is drawn for an unknown one."""
+    if cond == "clear":
+        _sun(r, x, y, s)
+    elif cond == "part":
+        _sun(r, x + s * 0.34, y - s * 0.34, s * 0.66)
+        _cloud(r, x - s * 0.12, y + s * 0.2, s * 0.78, CLOUD)
+    elif cond == "cloud":
+        _cloud(r, x, y, s, CLOUD)
+    elif cond == "rain":
+        _cloud(r, x, y - s * 0.22, s * 0.88, CLOUD)
+        for i in (-1, 0, 1):
+            dx = x + i * s * 0.42
+            r.line(dx, y + s * 0.5, dx - s * 0.14, y + s * 0.95, DROP, 2)
+    elif cond == "snow":
+        _cloud(r, x, y - s * 0.22, s * 0.88, CLOUD)
+        for i in (-1, 0, 1):
+            r.circle(x + i * s * 0.42, y + s * 0.72, s * 0.12,
+                     (0.9, 0.94, 1.0), fill=True)
+    elif cond == "storm":
+        _cloud(r, x, y - s * 0.26, s * 0.88, CLOUD)
+        r.poly(((x + s * 0.12, y + s * 0.32), (x - s * 0.28, y + s * 0.42),
+                (x - s * 0.02, y + s * 0.52), (x - s * 0.22, y + s * 1.0),
+                (x + s * 0.3, y + s * 0.42), (x + s * 0.02, y + s * 0.36)),
+               BOLT, fill=True)
+    elif cond == "fog":
+        for i, width in enumerate((0.9, 0.75, 0.85)):
+            dy = y - s * 0.4 + i * s * 0.42
+            r.line(x - s * width, dy, x + s * width, dy, CLOUD, 2)
+    elif cond == "wind":
+        for i, width in enumerate((0.8, 1.0)):
+            dy = y - s * 0.22 + i * s * 0.5
+            r.line(x - s * width, dy, x + s * width * 0.6, dy, CLOUD, 2)
+            r.arc(x + s * width * 0.6, dy - s * 0.18, s * 0.2, 90, 300, CLOUD, 2)
+
+
+def raindrop(r, x, y, s=6, colour=DROP):
+    """The chance-of-rain marker: a teardrop, so the number beside it needs no
+    label. A percentage on its own would read as humidity, or battery."""
+    r.poly(((x, y - s), (x + s * 0.72, y + s * 0.38), (x - s * 0.72, y + s * 0.38)),
+           colour, fill=True)
+    r.circle(x, y + s * 0.34, s * 0.72, colour, fill=True)
 
 
 class SettingsView:

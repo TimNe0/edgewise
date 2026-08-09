@@ -21,6 +21,8 @@ edgewise-pub -- publish one slot update to an Edgewise badge.
   edgewise-pub.sh <slot> <state> [message]   working|needs_you|done|error|info
   edgewise-pub.sh --clear <slot>             remove the slot from the board
   edgewise-pub.sh --text <message> [level]   a line on the screen (info|alert)
+  edgewise-pub.sh --weather <cond> [temp] [rain%]
+                                             the middle of the dashboard
   edgewise-pub.sh --check                    show the resolved config, test it
 
 Config, read from ~/.config/edgewise/env (or $EDGEWISE_ENV) and the environment:
@@ -177,6 +179,26 @@ EOF
     # well as the edge from the board. {"state":"clear"} would leave a retained
     # message behind for the badge to re-read and re-clear on every reconnect.
     publish "slot/$(topic_name "$2")" "" 1
+    exit 0
+    ;;
+--weather)
+    require_config
+    [ $# -ge 2 ] || die "usage: $PROG --weather <cond> [temp] [rain%]"
+    case "$2" in
+    clear|part|cloud|rain|snow|storm|fog|wind) ;;
+    *) die "unknown condition '$2' (clear part cloud rain snow storm fog wind)" ;;
+    esac
+    payload="{\"cond\":\"$2\""
+    if [ -n "${3:-}" ]; then
+        payload="$payload,\"temp\":$3"
+    fi
+    if [ -n "${4:-}" ]; then
+        payload="$payload,\"rain\":$4"
+    fi
+    payload="$payload,\"unit\":\"${EDGEWISE_TEMP_UNIT:-C}\",\"ttl\":${EDGEWISE_WEATHER_TTL:-10800}}"
+    # Retained, so the badge still knows the weather after a reboot; the TTL is
+    # what stops it believing it forever.
+    publish "weather" "$payload" 1
     exit 0
     ;;
 --text)

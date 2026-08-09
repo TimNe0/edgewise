@@ -48,7 +48,16 @@ edgewise-pub.sh build done
 edgewise-pub.sh build error "3 tests failed"
 edgewise-pub.sh --clear build
 edgewise-pub.sh --text "bins tonight" alert
+edgewise-pub.sh --weather rain 12 40      # condition, degrees, chance of rain
+edgewise-pub.sh --weather clear 21
 ```
+
+The weather shows in the middle of the dashboard under the clock, and steps
+aside the moment a slot needs you. Conditions are `clear` `part` `cloud`
+`rain` `snow` `storm` `fog` `wind`; temperature and chance of rain are both
+optional. Run it from cron against whatever weather API you already use --
+the badge has no HTTP client and never fetches anything itself, so the API
+key stays on a machine that can keep one.
 
 Slot names are lowercased, truncated to 16 characters, and have `/ # + space`
 replaced with `-`, because a slot name is one level of an MQTT topic.
@@ -68,6 +77,8 @@ replaced with `-`, because a slot name is one level of an MQTT topic.
 | `EDGEWISE_LABELS` | `name` (default) or `hash` — see Privacy below |
 | `EDGEWISE_ENV` | path to the env file, if not `~/.config/edgewise/env` |
 | `EDGEWISE_PUB` | path to the publisher, for `run-and-report` and the other adapters |
+| `EDGEWISE_TEMP_UNIT` | `C` (default) or `F`, for `--weather` |
+| `EDGEWISE_WEATHER_TTL` | default 10800 (three hours). Stale weather expires rather than lying |
 | `EDGEWISE_RUN_TTL` | default 86400. The TTL `run-and-report` uses while a command is still running, so a nine-hour job does not expire mid-flight |
 
 Anything set in the environment beats the env file, so a one-off override is

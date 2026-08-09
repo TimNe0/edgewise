@@ -71,7 +71,13 @@ class TestConnection(unittest.TestCase):
         client = make.made[0]
         self.assertTrue(client.connected)
         self.assertEqual(link.state, mqtt_link.STATE_ONLINE)
-        self.assertEqual(len(client.subscriptions), 3)
+        # The exact set, not the count: a subscription silently dropped by a
+        # refactor is a topic that stops working, and a count only catches that
+        # if nothing else was added in the same change.
+        root = link.spec.root()
+        self.assertEqual(
+            sorted(mqtt_link.topic_suffix(t, root) for t in client.subscriptions),
+            ["led", "slot/+", "text", "weather"])
 
     def test_last_will_is_registered_before_connecting(self):
         """The fake raises if the order is wrong, because the real one does not.

@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -956,10 +956,22 @@ class EdgewiseApp(app.App):
         phases = ",".join('"%s":%d' % (k, v)
                           for k, v in sorted(self._phase_ms.items()))
         self._phase_ms = {}
+        # Which LED write path actually bound, and on how many LEDs. v0.8.0's
+        # fast path is feature-detected against a class that is frozen into the
+        # ESP32 port and absent from the source checkout, so "it fell back
+        # silently" and "it is bound and still slow" look identical from here.
+        engine = self.engine
+        compose_ms = engine.us_compose // 1000
+        write_ms = engine.us_write // 1000
+        engine.us_compose = engine.us_write = 0
+
         payload = ('{"loops_per_s":%d,"renders_per_s":%d,"worst_ms":%d,'
-                   '"free":%d,"slots":%d,"dropped_in":%d,"ms":{%s}}') % (
+                   '"free":%d,"slots":%d,"dropped_in":%d,"path":"%s",'
+                   '"leds":%d,"offset":%d,"compose_ms":%d,"write_ms":%d,'
+                   '"ms":{%s}}') % (
             loops, renders, worst, free, len(self.board.slots),
-            self.link.dropped_in, phases)
+            self.link.dropped_in, engine.path(), self.profile.led_count,
+            self.profile.led_offset, compose_ms, write_ms, phases)
         self.link._queue(self.link.spec.root() + "/stats", payload.encode(), False)
 
     def _wall_clock(self):

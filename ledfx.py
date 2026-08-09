@@ -32,6 +32,23 @@ most important test in the repo.
 
 from . import clock
 
+
+def _ticks_us():
+    """Microseconds, or None where the platform has no such clock.
+
+    The LED frame is sub-millisecond in theory, so measuring it with ticks_ms
+    would report zero and prove nothing. Resolved once, not per call.
+    """
+    try:
+        import time
+
+        return time.ticks_us
+    except (ImportError, AttributeError):  # pragma: no cover - CPython
+        return None
+
+
+_TICKS_US = _ticks_us()
+
 # 3 Hz, as one full on-off cycle per 334 ms. Requests for anything faster are
 # clamped and never honoured -- not scaled, not warned about, clamped.
 MIN_STROBE_PERIOD_MS = 334
@@ -357,6 +374,11 @@ class LedEngine:
         self._buf_out = None
         self._order = (1, 0, 2)
         self._bpp = 3
+        # Microseconds accumulated since the last stats window, read and reset
+        # by the app. Composing a frame and pushing it to the wire are very
+        # different costs and have to be told apart.
+        self.us_compose = 0
+        self.us_write = 0
         self.palette = "default"
         if cfg:
             self.configure(cfg)
@@ -412,8 +434,15 @@ class LedEngine:
 
     # -- rendering -----------------------------------------------------------
 
+    def path(self):
+        """Which write path is bound: what the fast path is worth, measured."""
+        if not self._bound:
+            return "unbound"
+        return "buf" if self._buf_out is not None else "slow"
+
     def render(self, now_ms, transitions=None):
         """Build one frame. Returns True if the hardware was written."""
+        started = _TICKS_US() if _TICKS_US else 0
         buf = self._buf
         for i in range(len(buf)):
             buf[i] = 0
@@ -443,11 +472,16 @@ class LedEngine:
                 self._ring_raw = None
 
         self._apply_caps()
+        if _TICKS_US:
+            mid = _TICKS_US()
+            self.us_compose += mid - started
         if self._have_last and self._out == self._last:
             return False
         self._last[:] = self._out
         self._have_last = True
         self._write()
+        if _TICKS_US:
+            self.us_write += _TICKS_US() - mid
         return True
 
     def _anything_lit(self, now_ms):

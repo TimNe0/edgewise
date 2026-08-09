@@ -82,7 +82,7 @@ class Dashboard:
         self._arcs(r, layout, engine, now_ms, selected)
         self._labels(r, board, layout, now_ms, selected)
         self._centre(r, board, now_ms, hhmm, weather, snoozed)
-        self._footer(r, link_state, cfg)
+        self._footer(r, link_state, cfg, selected)
 
     def _arcs(self, r, layout, engine, now_ms, selected=None):
         for edge in range(EDGES):
@@ -211,7 +211,10 @@ class Dashboard:
                 r.text(part[2], x + icon + 3, y + 5, DROP, size=13, align="left")
             x += part[1] + gap
 
-    def _footer(self, r, link_state, cfg):
+    def _footer(self, r, link_state, cfg, selected=None):
+        if selected is not None:
+            r.text("CONFIRM open  ·  hold CANCEL drop", 0, 88,
+                   (0.4, 0.4, 0.44), size=9, align="center")
         if link_state:
             r.text(link_state, 0, 100, DIM, size=10, align="center")
         if cfg:
@@ -248,6 +251,7 @@ class DetailView:
         r.text("CONFIRM ack  ·  hold deny", 0, 88, (0.4, 0.4, 0.44),
                size=10, align="center")
         r.text("CANCEL back", 0, 100, (0.3, 0.3, 0.34), size=9, align="center")
+
 
     def _wrapped(self, r, text, y):
         # The panel is round, so the usable width narrows away from the middle.

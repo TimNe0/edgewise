@@ -287,3 +287,31 @@ class TestRepositoryDeliverables(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOnScreenHintsAreTrue(unittest.TestCase):
+    """The recurring bug in this project, three times over: a screen that
+    advertises an action nothing implements. LEFT opened settings that did not
+    exist; controls.md documented a highlight nothing drew; the detail view
+    offered ack and deny and handled neither.
+
+    A view's own text is a promise to the user, so check the promises."""
+
+    def setUp(self):
+        self.views = read(os.path.join(ROOT, "views.py"))
+        self.app = read(os.path.join(ROOT, "app.py"))
+
+    def test_every_button_named_on_a_screen_has_a_handler(self):
+        # Button names as they appear in hint strings drawn to the display.
+        named = set(re.findall(r"\b(CONFIRM|CANCEL|LEFT|RIGHT|UP|DOWN)\b",
+                               " ".join(re.findall(r'r\.text\(\s*"([^"]+)"',
+                                                   self.views))))
+        missing = [b for b in sorted(named)
+                   if '_pressed("%s")' % b not in self.app
+                   and '"%s" in self._held' % b not in self.app]
+        self.assertEqual(missing, [], "promised on screen, no handler")
+
+    def test_the_detail_view_hint_matches_controls_md(self):
+        controls = read(os.path.join(ROOT, "controls.md"))
+        self.assertIn("CONFIRM ack", self.views)
+        self.assertIn("| CONFIRM | acknowledge", controls)

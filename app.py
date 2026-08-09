@@ -25,7 +25,7 @@ from . import layout as layout_mod, ledfx, model, mqtt_link, security, touch as 
 from . import views
 from .render_ctx import CtxRenderer
 
-VERSION = "0.6.2"
+VERSION = "0.7.0"
 
 SCREEN_DASH = 0
 SCREEN_DETAIL = 1
@@ -131,6 +131,10 @@ class EdgewiseApp(app.App):
         self._held = set()
         self._press_ms = {}
         self._confirm_was_down = False
+        self._cancel_was_down = False
+        # Set once a CANCEL hold has already dismissed something, so releasing
+        # the same press does not then also run the tap action.
+        self._cancel_consumed = False
         self._uptime_ms = 0
         self._last_tick_ms = time.ticks_ms()
         self._led_timer = 0
@@ -659,12 +663,27 @@ class EdgewiseApp(app.App):
             self.screen = SCREEN_SETTINGS
             self._dirty = True
             return
+        # CANCEL acts on release, because it now has two meanings: a tap backs
+        # out, a hold dismisses the selected slot. Acting on press would fire
+        # the tap action before a hold could be recognised.
         if self._pressed("CANCEL"):
-            if self.selected_edge is not None:
-                self.selected_edge = None
-                self._dirty = True
-            else:
-                self._shutdown()
+            self._cancel_consumed = False
+        if "CANCEL" in self._held:
+            if (not self._cancel_consumed
+                    and self._held_for("CANCEL") >= gest.LONG_MS
+                    and self._selected_name() is not None):
+                self._cancel_consumed = True
+                self._dismiss_selected()
+            self._cancel_was_down = True
+            return
+        if self._cancel_was_down:
+            self._cancel_was_down = False
+            if not self._cancel_consumed:
+                if self.selected_edge is not None:
+                    self.selected_edge = None
+                    self._dirty = True
+                else:
+                    self._shutdown()
             return
         if self._pressed("UP"):
             self._move_selection(-1)
@@ -673,20 +692,20 @@ class EdgewiseApp(app.App):
             self._move_selection(1)
             return
         if self._pressed("RIGHT"):
-            name = self._selected_name()
-            if name:
-                self._detail_name = name
-                self.screen = SCREEN_DETAIL
-                self._dirty = True
+            # Kept as an alias so anyone who learned RIGHT is not stranded.
+            self._open_detail()
             return
-        # CONFIRM feeds the gesture recogniser rather than acting directly, so
-        # a button press and a pad touch travel exactly the same path: tap
-        # acknowledges, hold denies, double-tap opens the detail view. One code
-        # path, one set of timings, one test suite.
+        # CONFIRM opens the slot rather than acknowledging it outright. Every
+        # other app on the badge treats CONFIRM as "select", and acknowledging
+        # from the dashboard meant deciding without having read the message --
+        # which for approve-from-badge is the entire point of the message.
+        #
+        # The decision itself lives one screen in, where the text is legible.
+        # The touch ring keeps its direct tap-to-ack: on a 2026 you are
+        # pointing at the edge, so there is no ambiguity about which slot you
+        # mean, and no button to be consistent with.
         if self._pressed("CONFIRM"):
-            self.gestures.press(self.selected_edge, clock.now_ms())
-        elif "CONFIRM" not in self._held and self._confirm_was_down:
-            self.gestures.release(self.selected_edge, clock.now_ms())
+            self._open_detail()
         self._confirm_was_down = "CONFIRM" in self._held
 
     # -- settings -------------------------------------------------------------
@@ -797,6 +816,35 @@ class EdgewiseApp(app.App):
             return
         self.snoozed = self.flip.flipped
         self._publish_event("snooze" if self.snoozed else "wake", "", None)
+        self._dirty = True
+
+    def _open_detail(self):
+        name = self._selected_name()
+        if not name:
+            return
+        self._detail_name = name
+        self.screen = SCREEN_DETAIL
+        self._dirty = True
+
+    def _dismiss_selected(self):
+        """Take a slot off this badge, without pretending to have acted on it.
+
+        An ack says "I have seen this" to whatever published it; the publisher
+        then owns what happens next, which is why acknowledging has never
+        removed anything. Sometimes you just want it off your board -- and with
+        nothing subscribed to `event`, that was previously impossible from the
+        badge at all.
+
+        Local only, and honest about it: if the slot is still retained on the
+        broker it returns on the next reconnect, because the publisher still
+        thinks it matters and the badge is not the authority on that.
+        """
+        name = self._selected_name()
+        if not name:
+            return
+        self.board.remove(name)
+        self.selected_edge = None
+        self.notification = Notification("Dismissed")
         self._dirty = True
 
     def _selected_name(self):
